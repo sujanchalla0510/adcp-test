@@ -13,10 +13,13 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sujanchalla0510/adcp-test/internal/config"
 	"github.com/sujanchalla0510/adcp-test/internal/conformance"
+	"github.com/sujanchalla0510/adcp-test/internal/recorder"
+	"github.com/sujanchalla0510/adcp-test/internal/session"
 	adcpweb "github.com/sujanchalla0510/adcp-test/web"
 )
 
@@ -29,6 +32,15 @@ type Server struct {
 	cfg  *config.Config
 	http *http.Server
 	mux  *http.ServeMux
+
+	// sessions accumulates recorded MCP traffic for the Inspect screen.
+	sessions *session.Store
+
+	mu        sync.Mutex
+	recorder  *recorder.Recorder
+	cassettes map[string]*storedCassette
+	replays   map[string]*runningReplay
+	replaySeq int64
 }
 
 // New builds a Server from cfg.
@@ -38,11 +50,20 @@ func New(cfg *config.Config) *Server {
 		// web/ is embedded at build time; this is unreachable in practice.
 		panic(fmt.Sprintf("adcp-test: embedded web assets missing: %v", err))
 	}
+	s := &Server{
+		cfg:       cfg,
+		sessions:  session.NewStore(),
+		cassettes: map[string]*storedCassette{},
+		replays:   map[string]*runningReplay{},
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/health", healthHandler)
 	mux.HandleFunc("/api/conformance/run", conformanceRunHandler)
-	return &Server{cfg: cfg, http: &http.Server{Handler: mux}, mux: mux}
+	registerInspectRoutes(mux, s)
+	s.mux = mux
+	s.http = &http.Server{Handler: mux}
+	return s
 }
 
 // Addr returns the localhost address the server binds to.

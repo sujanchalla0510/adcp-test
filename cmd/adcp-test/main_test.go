@@ -80,3 +80,25 @@ func TestRunConformanceCIUnreachable(t *testing.T) {
 		t.Fatalf("expected a report on stdout, got: %.200s", buf.String())
 	}
 }
+
+func TestRunRecordMissingFlags(t *testing.T) {
+	// Missing --upstream / --out must fail fast (exit 2), never start a proxy.
+	if code := runRecord([]string{}); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing flags", code)
+	}
+	if code := runRecord([]string{"--upstream", "http://127.0.0.1:9/x"}); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing --out", code)
+	}
+	if code := runRecord([]string{"--upstream", "ftp://bad/scheme", "--out", "x.json"}); code == 0 {
+		t.Fatalf("exit code = %d, want non-zero for bad upstream", code)
+	}
+}
+
+func TestRunReplayMissingFlags(t *testing.T) {
+	if code := runReplay([]string{}); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing --cassette", code)
+	}
+	if code := runReplay([]string{"--cassette", "/nonexistent/cassette.json"}); code != 2 && code != 1 {
+		t.Fatalf("exit code = %d, want non-zero for missing cassette file", code)
+	}
+}

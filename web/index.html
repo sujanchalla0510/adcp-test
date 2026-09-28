@@ -15,7 +15,7 @@
   <ul>
     <li><button data-screen="dashboard" class="active">Dashboard</button></li>
     <li><button data-screen="conformance">Conformance</button></li>
-    <li><button disabled title="M3 — coming soon">Inspect</button></li>
+    <li><button data-screen="inspect">Inspect</button></li>
     <li><button disabled title="M4 — coming soon">Mock builder</button></li>
     <li><button disabled title="M5 — coming soon">Scenarios</button></li>
     <li><button disabled title="M5 — coming soon">Load</button></li>
@@ -30,7 +30,7 @@
       <p>The web shell is live. Capability screens land milestone by milestone:</p>
       <ol>
         <li><strong>M2</strong> — Conformance core — <strong>live</strong>: open the Conformance screen to run it.</li>
-        <li><strong>M3</strong> — Inspect + record/replay</li>
+        <li><strong>M3</strong> — Inspect + record/replay — <strong>live</strong>: open the Inspect screen to record traffic and replay cassettes.</li>
         <li><strong>M4</strong> — Mock builder (config-driven mock sellers)</li>
         <li><strong>M5</strong> — Scenarios + load</li>
         <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports)</li>
@@ -41,6 +41,9 @@
       <h2>API</h2>
       <p>Health check: <a href="/api/health"><code>/api/health</code></a></p>
       <p>Conformance: <code>POST /api/conformance/run</code> with <code>{"target_url": "https://seller.example/mcp"}</code></p>
+      <p>Inspect: <code>GET /api/sessions</code>, <code>POST /api/record/start</code>,
+         <code>POST /api/record/stop</code>, <code>GET /api/cassettes</code>,
+         <code>POST /api/replay/start</code>, <code>POST /api/replay/stop</code></p>
     </div>
   </section>
 
@@ -65,6 +68,48 @@
         arguments, so a conforming seller can never act on them.</p>
     </div>
     <div id="conformance-results" aria-live="polite"></div>
+  </section>
+
+  <section id="screen-inspect" class="screen hidden">
+    <div class="card">
+      <h2>Inspect</h2>
+      <p>Record live MCP traffic through a proxy, inspect every tool call on a
+         timeline, save cassettes, and replay them as a fake seller.</p>
+      <div class="cols">
+        <div class="panel">
+          <h3>Record</h3>
+          <form id="record-form">
+            <label>Upstream seller MCP URL
+              <input type="url" id="record-upstream" placeholder="https://seller.example/mcp" required>
+            </label>
+            <button type="submit" id="record-start-btn">Start recording proxy</button>
+          </form>
+          <div id="record-status" aria-live="polite"></div>
+        </div>
+        <div class="panel">
+          <h3>Replay</h3>
+          <form id="replay-form">
+            <label>Cassette
+              <select id="replay-cassette"></select>
+            </label>
+            <label class="checkline"><input type="checkbox" id="replay-strict"> strict argument matching</label>
+            <button type="submit" id="replay-start-btn">Start replay server</button>
+          </form>
+          <div id="replay-status" aria-live="polite"></div>
+        </div>
+      </div>
+      <p class="meta">Recording is secret-safe: authorization and signature headers plus
+         token-like fields are redacted before anything is stored.</p>
+    </div>
+    <div class="card">
+      <h3>Sessions</h3>
+      <div id="sessions-list"><p class="meta">No sessions yet.</p></div>
+    </div>
+    <div id="session-detail"></div>
+    <div class="card">
+      <h3>Cassettes</h3>
+      <div id="cassettes-list"><p class="meta">No cassettes yet.</p></div>
+    </div>
   </section>
 </main>
 <script src="/app.js"></script>
