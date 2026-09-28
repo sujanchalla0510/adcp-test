@@ -1,0 +1,12 @@
+# Binaries
+/adcp-test
+*.exe
+
+# Go build cache / test artifacts
+*.test
+*.out
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
