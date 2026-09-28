@@ -48,14 +48,16 @@ func TestInspectScreenWired(t *testing.T) {
 			t.Fatalf("app.js missing %q", want)
 		}
 	}
-	// Other milestone screens stay placeholders.
+	// Other milestone screens stay placeholders (M4 shipped this milestone).
 	for _, want := range []string{
-		`title="M4 — coming soon"`,
 		`title="M5 — coming soon"`,
 		`title="M6 — coming soon"`,
 	} {
 		if !strings.Contains(string(html), want) {
 			t.Fatalf("index.html lost placeholder %q", want)
 		}
+	}
+	if strings.Contains(string(html), `title="M4 — coming soon"`) {
+		t.Fatal("index.html still marks Mock builder as a coming-soon placeholder")
 	}
 }

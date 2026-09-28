@@ -102,3 +102,13 @@ func TestRunReplayMissingFlags(t *testing.T) {
 		t.Fatalf("exit code = %d, want non-zero for missing cassette file", code)
 	}
 }
+
+func TestRunMockMissingFlags(t *testing.T) {
+	// Missing --config must fail fast (exit 2), never start a server.
+	if code := runMock([]string{}); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing --config", code)
+	}
+	if code := runMock([]string{"--config", "/nonexistent/mock.yaml"}); code == 0 {
+		t.Fatalf("exit code = %d, want non-zero for missing config file", code)
+	}
+}

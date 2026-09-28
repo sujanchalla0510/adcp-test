@@ -10,8 +10,12 @@
 //	    Start a recording proxy on localhost; point a buyer client at the
 //	    printed proxy URL. Ctrl-C stops the proxy and writes the cassette.
 //
-//	adcp-test replay --cassette session.cassette.json [--port 18743] [--strict]
-//	    Serve a cassette as a fake MCP endpoint on localhost.
+//	adcp-test mock --config integration.yaml
+//	    Run config-driven mock seller services headless. One config file
+//	    can define several mocks (compose); each listens on its own
+//	    address. A mock with record: proxies the upstream seller and, on
+//	    Ctrl-C, writes the generated config to capture_to (or prints it
+//	    when capture_to is unset).
 package main
 
 import (
@@ -23,12 +27,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sujanchalla0510/adcp-test/internal/cassette"
 	"github.com/sujanchalla0510/adcp-test/internal/config"
 	"github.com/sujanchalla0510/adcp-test/internal/conformance"
+	"github.com/sujanchalla0510/adcp-test/internal/mockcfg"
+	"github.com/sujanchalla0510/adcp-test/internal/mockserver"
 	"github.com/sujanchalla0510/adcp-test/internal/recorder"
 	"github.com/sujanchalla0510/adcp-test/internal/server"
 	"github.com/sujanchalla0510/adcp-test/internal/session"
@@ -44,6 +51,8 @@ func main() {
 			os.Exit(runRecord(os.Args[2:]))
 		case "replay":
 			os.Exit(runReplay(os.Args[2:]))
+		case "mock":
+			os.Exit(runMock(os.Args[2:]))
 		}
 	}
 
@@ -166,6 +175,86 @@ func runReplay(args []string) int {
 	fmt.Println("press Ctrl-C to stop")
 	waitForSignal()
 	return 0
+}
+
+// runMock runs config-driven mock seller services headless until Ctrl-C.
+func runMock(args []string) int {
+	fs := flag.NewFlagSet("mock", flag.ContinueOnError)
+	configPath := fs.String("config", "", "mock YAML config file (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *configPath == "" {
+		fs.Usage()
+		return 2
+	}
+
+	cfg, err := mockcfg.LoadFile(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mock:", err)
+		return 1
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "mock: invalid config:")
+		for _, line := range strings.Split(err.Error(), "\n") {
+			fmt.Fprintln(os.Stderr, "  "+line)
+		}
+		return 1
+	}
+
+	var srvs []*mockserver.Server
+	for _, svc := range cfg.Services() {
+		srv, err := mockserver.New(svc, mockserver.Options{BaseDir: cfg.BaseDir()})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mock %q: %v\n", svc.Name, err)
+			return 1
+		}
+		url, err := srv.Start()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mock %q: %v\n", svc.Name, err)
+			return 1
+		}
+		srvs = append(srvs, srv)
+		mode := "mock"
+		if srv.IsRecordMode() {
+			mode = "record proxy"
+		}
+		fmt.Printf("mock %-12s %-12s %s\n", svc.Name, mode, url)
+	}
+	fmt.Println("press Ctrl-C to stop")
+	waitForSignal()
+
+	for _, srv := range srvs {
+		if srv.IsRecordMode() {
+			finishRecordCLI(srv)
+		}
+		_ = srv.Close()
+	}
+	return 0
+}
+
+// finishRecordCLI generates the mock config from a record-mode server's
+// captured traffic: written to capture_to, or printed when unset.
+func finishRecordCLI(srv *mockserver.Server) {
+	cfg := srv.RecordedConfig()
+	if cfg == nil || len(cfg.Services()) == 0 || len(cfg.Services()[0].Routes) == 0 {
+		fmt.Printf("mock %-12s no exchanges captured; nothing generated\n", srv.Name())
+		return
+	}
+	data, err := cfg.Marshal()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mock %s: generate config: %v\n", srv.Name(), err)
+		return
+	}
+	if path := srv.CaptureTo(); path != "" {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "mock %s: write %s: %v\n", srv.Name(), path, err)
+			return
+		}
+		fmt.Printf("mock %-12s wrote %d routes to %s\n", srv.Name(), len(cfg.Services()[0].Routes), path)
+		return
+	}
+	fmt.Printf("mock %-12s generated config:\n%s", srv.Name(), data)
 }
 
 // waitForSignal blocks until SIGINT or SIGTERM.

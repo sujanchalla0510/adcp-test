@@ -41,6 +41,12 @@ type Server struct {
 	cassettes map[string]*storedCassette
 	replays   map[string]*runningReplay
 	replaySeq int64
+
+	// Mock builder (M4) state.
+	mockCfg        string
+	mockRunning    []*runningMock
+	mockRecordings []*recordingProxy
+	mockSeq        int64
 }
 
 // New builds a Server from cfg.
@@ -55,12 +61,14 @@ func New(cfg *config.Config) *Server {
 		sessions:  session.NewStore(),
 		cassettes: map[string]*storedCassette{},
 		replays:   map[string]*runningReplay{},
+		mockCfg:   defaultMockConfig,
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/health", healthHandler)
 	mux.HandleFunc("/api/conformance/run", conformanceRunHandler)
 	registerInspectRoutes(mux, s)
+	registerMockRoutes(mux, s)
 	s.mux = mux
 	s.http = &http.Server{Handler: mux}
 	return s
