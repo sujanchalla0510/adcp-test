@@ -24,7 +24,7 @@ UI-first: a single Go binary serves the app on localhost. A headless `--ci` mode
 
 ## Status
 
-M1 scaffold (in progress) → M2 conformance core → M3 inspect + record/replay → M4 mock builder → M5 scenarios + load → M6 polish + v0.1 launch → M7 GitHub Action, MCP server, spec-upgrade diffs.
+M1 scaffold (done) → M2 conformance core (done: MCP client, tool-surface / schema / auth / error checks, Conformance screen, `--ci --target`) → M3 inspect + record/replay → M4 mock builder → M5 scenarios + load → M6 polish + v0.1 launch → M7 GitHub Action, MCP server, spec-upgrade diffs.
 
 Private repo until v0.1; public at launch.
 
@@ -33,8 +33,34 @@ Private repo until v0.1; public at launch.
 ```sh
 go run ./cmd/adcp-test            # serves the UI on http://127.0.0.1:18742
 go run ./cmd/adcp-test --port 8080
-go run ./cmd/adcp-test --ci       # headless CI mode: JSON status, exit 0
+go run ./cmd/adcp-test --ci --target https://seller.example/mcp  # headless conformance: JSON report on stdout, exit 0 when all checks pass, 1 otherwise
 ```
+
+### Conformance
+
+`--ci --target <url>` (or the Conformance screen, or `POST /api/conformance/run`
+with `{"target_url": ...}`) runs the suite against a seller agent's MCP
+endpoint and produces a machine-readable report:
+
+```json
+{
+  "target_url": "https://seller.example/mcp",
+  "started_at": "2026-09-28T...",
+  "finished_at": "2026-09-28T...",
+  "summary": { "total": 24, "passed": 24, "failed": 0, "skipped": 0 },
+  "checks": [
+    { "name": "tool-surface", "status": "pass", "detail": "...", "duration_ms": 12.3 },
+    { "name": "schema:get_products", "status": "pass", "detail": "...", "duration_ms": 0.1 },
+    { "name": "auth:unsigned-mutating-call-rejected", "status": "pass", "detail": "...", "duration_ms": 8.7 }
+  ]
+}
+```
+
+Check families: `tool-surface` (expected AdCP tool surface from `tools/list`),
+`schema:<tool>` (declared inputSchema well-formedness + expected required
+fields), `auth:*` (unsigned / malformed-signature mutating probes must be
+rejected; read-only behavior documented), `errors:*` (unknown tool and
+invalid args must return structured JSON-RPC errors, not HTML/plaintext).
 
 ## License
 

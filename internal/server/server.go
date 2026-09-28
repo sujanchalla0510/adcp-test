@@ -1,19 +1,28 @@
 // Package server implements the adcp-test local web server.
 //
 // The server binds to localhost only and serves the embedded UI plus a
-// small JSON API. Local-first: it never makes outbound network calls and
-// collects no telemetry.
+// small JSON API. Local-first: it collects no telemetry and makes no
+// outbound network calls except when the user explicitly runs a
+// conformance check against a seller URL they configured.
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/sujanchalla0510/adcp-test/internal/config"
+	"github.com/sujanchalla0510/adcp-test/internal/conformance"
 	adcpweb "github.com/sujanchalla0510/adcp-test/web"
 )
+
+// maxConformanceRun bounds how long one conformance run may take when
+// triggered through the API.
+const maxConformanceRun = 2 * time.Minute
 
 // Server is the adcp-test local web server.
 type Server struct {
@@ -32,6 +41,7 @@ func New(cfg *config.Config) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/conformance/run", conformanceRunHandler)
 	return &Server{cfg: cfg, http: &http.Server{Handler: mux}, mux: mux}
 }
 
@@ -58,4 +68,49 @@ func (s *Server) Handler() http.Handler {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok","service":"adcp-test"}`))
+}
+
+// conformanceRunRequest is the POST /api/conformance/run body.
+type conformanceRunRequest struct {
+	TargetURL   string `json:"target_url"`
+	TargetURLV2 string `json:"targetUrl"` // alias
+	BearerToken string `json:"bearer_token"`
+}
+
+// conformanceRunHandler runs the conformance suite against the
+// user-configured seller URL and returns the report as JSON.
+func conformanceRunHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req conformanceRunRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		return
+	}
+	target := req.TargetURL
+	if target == "" {
+		target = req.TargetURLV2
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), maxConformanceRun)
+	defer cancel()
+	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: req.BearerToken})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(rep)
+}
+
+func writeAPIError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]string{"status": "error", "error": msg})
 }

@@ -12,6 +12,9 @@ type Config struct {
 	Port int
 	// CIMode enables headless CI mode: print a JSON status and exit.
 	CIMode bool
+	// Target is the seller agent's MCP endpoint URL under test.
+	// Used with CIMode and by the conformance UI screen.
+	Target string
 }
 
 // FromFlags registers adcp-test flags on fs and returns the Config that
@@ -19,6 +22,7 @@ type Config struct {
 func FromFlags(fs *flag.FlagSet) *Config {
 	c := &Config{}
 	fs.IntVar(&c.Port, "port", DefaultPort, "localhost port to serve the UI on")
-	fs.BoolVar(&c.CIMode, "ci", false, "headless CI mode: print JSON status and exit")
+	fs.BoolVar(&c.CIMode, "ci", false, "headless CI mode: run conformance against --target, print JSON report, exit 0 on all-pass")
+	fs.StringVar(&c.Target, "target", "", "seller agent MCP endpoint URL to test (used with --ci)")
 	return c
 }

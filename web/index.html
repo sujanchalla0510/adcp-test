@@ -13,32 +13,58 @@
 </header>
 <nav>
   <ul>
-    <li class="active">Dashboard</li>
-    <li class="soon" title="M2">Conformance</li>
-    <li class="soon" title="M3">Inspect</li>
-    <li class="soon" title="M4">Mock builder</li>
-    <li class="soon" title="M5">Scenarios</li>
-    <li class="soon" title="M5">Load</li>
-    <li class="soon" title="M6">Snapshots</li>
-    <li class="soon" title="M6">Reports</li>
+    <li><button data-screen="dashboard" class="active">Dashboard</button></li>
+    <li><button data-screen="conformance">Conformance</button></li>
+    <li><button disabled title="M3 — coming soon">Inspect</button></li>
+    <li><button disabled title="M4 — coming soon">Mock builder</button></li>
+    <li><button disabled title="M5 — coming soon">Scenarios</button></li>
+    <li><button disabled title="M5 — coming soon">Load</button></li>
+    <li><button disabled title="M6 — coming soon">Snapshots</button></li>
+    <li><button disabled title="M6 — coming soon">Reports</button></li>
   </ul>
 </nav>
 <main>
-  <section class="card">
-    <h2>M1 scaffold</h2>
-    <p>The web shell is live. Capability screens land milestone by milestone:</p>
-    <ol>
-      <li><strong>M2</strong> — Conformance core (MCP client, tool surface + schema + auth checks)</li>
-      <li><strong>M3</strong> — Inspect + record/replay</li>
-      <li><strong>M4</strong> — Mock builder (config-driven mock sellers)</li>
-      <li><strong>M5</strong> — Scenarios + load</li>
-      <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports)</li>
-    </ol>
-    <p class="meta">Local-first: this app runs entirely on your machine. No telemetry, no uploads.</p>
+  <section id="screen-dashboard" class="screen">
+    <div class="card">
+      <h2>M1 scaffold</h2>
+      <p>The web shell is live. Capability screens land milestone by milestone:</p>
+      <ol>
+        <li><strong>M2</strong> — Conformance core — <strong>live</strong>: open the Conformance screen to run it.</li>
+        <li><strong>M3</strong> — Inspect + record/replay</li>
+        <li><strong>M4</strong> — Mock builder (config-driven mock sellers)</li>
+        <li><strong>M5</strong> — Scenarios + load</li>
+        <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports)</li>
+      </ol>
+      <p class="meta">Local-first: this app runs entirely on your machine. No telemetry, no uploads.</p>
+    </div>
+    <div class="card">
+      <h2>API</h2>
+      <p>Health check: <a href="/api/health"><code>/api/health</code></a></p>
+      <p>Conformance: <code>POST /api/conformance/run</code> with <code>{"target_url": "https://seller.example/mcp"}</code></p>
+    </div>
   </section>
-  <section class="card">
-    <h2>API</h2>
-    <p>Health check: <a href="/api/health"><code>/api/health</code></a></p>
+
+  <section id="screen-conformance" class="screen hidden">
+    <div class="card">
+      <h2>Conformance</h2>
+      <p>Point at a seller agent's MCP endpoint and run the conformance suite:
+         tool surface, input schemas, auth behavior, error taxonomy.</p>
+      <form id="conformance-form">
+        <label>Target MCP endpoint URL
+          <input type="url" id="target-url" name="target_url"
+                 placeholder="https://seller.example/mcp" required>
+        </label>
+        <label>Bearer token (optional)
+          <input type="password" id="bearer-token" name="bearer_token"
+                 placeholder="only if the seller requires bearer auth" autocomplete="off">
+        </label>
+        <button type="submit" id="run-btn">Run conformance</button>
+      </form>
+      <p class="meta">Probes are read-only observations of how the endpoint responds.
+        The unsigned and malformed-signature probes use deliberately invalid
+        arguments, so a conforming seller can never act on them.</p>
+    </div>
+    <div id="conformance-results" aria-live="polite"></div>
   </section>
 </main>
 <script src="/app.js"></script>
