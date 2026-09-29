@@ -56,6 +56,16 @@
 //	    --out evidence.html [--pdf evidence.pdf]
 //	    Build a self-contained HTML evidence pack (plus an optional PDF
 //	    export) from run reports.
+//
+//	adcp-test mcp
+//	    Serve adcp-test as MCP tools over stdio (JSON-RPC 2.0): an AI
+//	    agent can drive conformance, scenarios, the signing debugger,
+//	    and lifecycle checks without shelling out to the CLI.
+//
+//	adcp-test specdiff --from 3.1 --to 4.0 [--target <seller-mcp-url>]
+//	    Diff two AdCP spec-version expectation surfaces (added/removed/
+//	    changed tools, auth-requirement changes). With --target, run
+//	    conformance and flag what would break under the newer spec.
 package main
 
 import (
@@ -111,6 +121,10 @@ func main() {
 			os.Exit(runSnapshot(os.Args[2:], os.Stdout))
 		case "report":
 			os.Exit(runReport(os.Args[2:], os.Stdout))
+		case "mcp":
+			os.Exit(runMCP(os.Args[2:], os.Stdin, os.Stdout))
+		case "specdiff":
+			os.Exit(runSpecdiff(os.Args[2:], os.Stdout))
 		}
 	}
 
