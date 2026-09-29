@@ -1,6 +1,11 @@
 # adcp-test
 
+**Supports AdCP 3.1** — v3 task protocol + RFC 9421 request-signing auth model.
+
 **v0.1 — launched.** The integration test suite for AdCP. One local web app that answers **"does my AdCP implementation actually work?"** — for buyer agents and seller agents.
+
+📖 **New here? Start with the [usage guide](docs/USAGE.md)** — install, then a
+5-minute end-to-end walkthrough with screenshots.
 
 ## What v0.1 ships
 
@@ -30,6 +35,7 @@ Requirements: Go 1.27+.
 ```sh
 git clone https://github.com/sujanchalla0510/adcp-test.git
 cd adcp-test
+go mod download
 go build -o adcp-test ./cmd/adcp-test
 ./adcp-test            # serves the UI on http://127.0.0.1:18742
 ```
