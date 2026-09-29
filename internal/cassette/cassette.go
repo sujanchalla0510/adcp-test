@@ -20,7 +20,7 @@
 //	  ]
 //	}
 //
-// Notes for later milestones (and hand-editing):
+// Notes for future work (and hand-editing):
 //   - "arguments" holds only the tools/call arguments object, not the
 //     full JSON-RPC envelope; request IDs are deliberately not stored
 //     because they vary per run.

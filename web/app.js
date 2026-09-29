@@ -6,6 +6,11 @@ document.querySelectorAll("nav button[data-screen]").forEach((btn) => {
   btn.addEventListener("click", () => showScreen(btn.dataset.screen));
 });
 
+// Dashboard capability cards: data-goto jumps to a screen.
+document.querySelectorAll("[data-goto]").forEach((btn) => {
+  btn.addEventListener("click", () => showScreen(btn.dataset.goto));
+});
+
 function showScreen(name) {
   document.querySelectorAll("nav button[data-screen]").forEach((b) => {
     b.classList.toggle("active", b.dataset.screen === name);
@@ -1172,10 +1177,14 @@ function drawCharts() {
 function drawLineChart(canvasId, points, getters, colors, labels, unit) {
   const cv = document.getElementById(canvasId);
   if (!cv) return;
+  const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const ink = dark ? "#e9edf1" : "#333";
+  const faint = dark ? "#9aa4b0" : "#666";
+  const grid = dark ? "#2a323c" : "#ddd";
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = dark ? "#161b21" : "#fff";
   ctx.fillRect(0, 0, W, H);
   const pad = { l: 44, r: 8, t: 8, b: 20 };
   const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
@@ -1189,14 +1198,14 @@ function drawLineChart(canvasId, points, getters, colors, labels, unit) {
   }
   maxV *= 1.1;
   // axes
-  ctx.strokeStyle = "#ddd";
+  ctx.strokeStyle = grid;
   ctx.beginPath();
   ctx.moveTo(pad.l, pad.t);
   ctx.lineTo(pad.l, pad.t + ih);
   ctx.lineTo(pad.l + iw, pad.t + ih);
   ctx.stroke();
   // y labels
-  ctx.fillStyle = "#666";
+  ctx.fillStyle = faint;
   ctx.font = "10px sans-serif";
   ctx.fillText("0", 6, pad.t + ih);
   ctx.fillText(fmtNum(maxV) + " " + unit, 6, pad.t + 10);
@@ -1220,7 +1229,7 @@ function drawLineChart(canvasId, points, getters, colors, labels, unit) {
   labels.forEach((lb, i) => {
     ctx.fillStyle = colors[i % colors.length];
     ctx.fillRect(pad.l + i * 52, H - 12, 10, 8);
-    ctx.fillStyle = "#333";
+    ctx.fillStyle = ink;
     ctx.fillText(lb, pad.l + i * 52 + 13, H - 4);
   });
 }
