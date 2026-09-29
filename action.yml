@@ -7,7 +7,10 @@ inputs:
     description: 'Seller agent MCP endpoint URL to test (required)'
     required: true
   version:
-    description: 'adcp-test version to install (e.g. latest, v0.3.0)'
+    description: >
+      adcp-test version to install (a release tag like v0.3.0, or 'latest').
+      Use 'checkout' to build from the action's own checkout instead of
+      installing a release (for this repo's CI).
     required: false
     default: 'latest'
   bearer-token:
@@ -35,9 +38,18 @@ runs:
       with:
         go-version: '1.27'
 
-    - name: Install adcp-test
+    - name: Install adcp-test (release)
+      if: inputs.version != 'checkout'
       shell: bash
       run: go install github.com/sujanchalla0510/adcp-test/cmd/adcp-test@${{ inputs.version }}
+
+    - name: Build adcp-test from checkout
+      if: inputs.version == 'checkout'
+      shell: bash
+      run: |
+        mkdir -p "${RUNNER_TEMP}/adcp-test-bin"
+        go build -o "${RUNNER_TEMP}/adcp-test-bin/adcp-test" "${GITHUB_ACTION_PATH}/cmd/adcp-test"
+        echo "${RUNNER_TEMP}/adcp-test-bin" >> "${GITHUB_PATH}"
 
     - name: Run conformance
       id: conformance

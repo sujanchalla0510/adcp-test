@@ -23,7 +23,7 @@ jobs:
 | Input          | Required | Default  | Description                                              |
 |----------------|----------|----------|----------------------------------------------------------|
 | `target`       | yes      | —        | Seller agent MCP endpoint URL                            |
-| `version`      | no       | `latest` | adcp-test version to install (e.g. `v0.3.0`)             |
+| `version`      | no       | `latest` | Release to install (`v0.3.0`, `latest`); `checkout` builds from the action's own checkout (repo CI) |
 | `bearer-token` | no       | —        | Bearer token for the target                              |
 | `fail-on`      | no       | `fail`   | `fail` fails the step on any failed check; `never` keeps the step green (report still uploaded) |
 

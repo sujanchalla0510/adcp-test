@@ -63,7 +63,7 @@ jobs:
         uses: ./
         with:
           target: http://127.0.0.1:18089
-          version: latest
+          version: checkout   # exercise this PR's code, not a release
 
       - name: Stop the mock seller
         if: always()
