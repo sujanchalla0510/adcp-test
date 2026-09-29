@@ -1,7 +1,7 @@
 // adcp-test web UI — vanilla JS, no dependencies.
 
 // Screen navigation: buttons with data-screen switch the visible section.
-// Disabled buttons are placeholders for later milestones.
+// Disabled buttons stay hidden until their screen is ready.
 document.querySelectorAll("nav button[data-screen]").forEach((btn) => {
   btn.addEventListener("click", () => showScreen(btn.dataset.screen));
 });
@@ -1233,7 +1233,7 @@ function fmtNum(n) {
 }
 
 // ---------------------------------------------------------------------------
-// M6: signing debugger, lifecycle check, protocol fuzz, webhooks,
+// Signing debugger, lifecycle check, protocol fuzz, webhooks,
 // snapshots, reports.
 // ---------------------------------------------------------------------------
 

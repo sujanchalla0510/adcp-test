@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestMockScreenWired guards the M4 UI wiring: the Mock builder nav entry
+// TestMockScreenWired guards the Mock builder UI wiring: the Mock builder nav entry
 // must be an enabled screen button, the section and its editor controls
 // must exist, and the client script must reference the mock API surface.
 func TestMockScreenWired(t *testing.T) {

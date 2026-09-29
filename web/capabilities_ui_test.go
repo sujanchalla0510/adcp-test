@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func m6assets(t *testing.T) (string, string) {
+func uiassets(t *testing.T) (string, string) {
 	t.Helper()
 	html, err := fs.ReadFile(FS, "index.html")
 	if err != nil {
@@ -19,10 +19,11 @@ func m6assets(t *testing.T) (string, string) {
 	return string(html), string(js)
 }
 
-// TestM6NavLive guards the M6 launch wiring: every M6 screen must have an
-// enabled nav entry and a section; the old disabled placeholders must be gone.
-func TestM6NavLive(t *testing.T) {
-	html, _ := m6assets(t)
+// TestCapabilityNavLive guards the capability wiring: every screen must have
+// an enabled nav entry and a section; no disabled coming-soon placeholders
+// may remain.
+func TestCapabilityNavLive(t *testing.T) {
+	html, _ := uiassets(t)
 	for _, screen := range []string{"signdebug", "webhooks", "snapshots", "reports"} {
 		if !strings.Contains(html, `<button data-screen="`+screen+`">`) {
 			t.Errorf("nav entry for %s missing or disabled", screen)
@@ -31,18 +32,20 @@ func TestM6NavLive(t *testing.T) {
 			t.Errorf("screen section for %s missing", screen)
 		}
 	}
-	if strings.Contains(html, `title="M6 — coming soon"`) {
-		t.Error("stale M6 coming-soon placeholders remain in nav")
+	if strings.Contains(html, "coming soon") {
+		t.Error("stale coming-soon placeholders remain in nav")
 	}
-	if !strings.Contains(html, "M6") || !strings.Contains(html, "live") {
-		t.Error("dashboard roadmap does not mark M6 as live")
+	for _, want := range []string{"Conformance", "Mock builder", "Signdebug"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard welcome card does not mention %q", want)
+		}
 	}
 }
 
 // TestSigndebugScreenWired checks the signing debugger form, the verify API
 // surface, and the verdict rendering helpers.
 func TestSigndebugScreenWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="signdebug-form"`,
 		`id="signdebug-results"`,
@@ -75,7 +78,7 @@ func TestSigndebugScreenWired(t *testing.T) {
 // cleared immediately after the single verification call, and the client
 // never writes key material to localStorage.
 func TestSigndebugKeyNotPersisted(t *testing.T) {
-	_, js := m6assets(t)
+	_, js := uiassets(t)
 	if !strings.Contains(js, `getElementById("sd-key").value = ""`) {
 		t.Error("key field is not cleared after verification")
 	}
@@ -97,7 +100,7 @@ func TestSigndebugKeyNotPersisted(t *testing.T) {
 
 // TestChaosToggleWired checks the scenario chaos toggle and its seed field.
 func TestChaosToggleWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="scenario-chaos"`,
 		`id="scenario-chaos-seed"`,
@@ -116,7 +119,7 @@ func TestChaosToggleWired(t *testing.T) {
 
 // TestLifecycleFuzzWired checks the lifecycle runner card and the fuzz form.
 func TestLifecycleFuzzWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="lifecycle-run-btn"`,
 		`id="lifecycle-results"`,
@@ -138,7 +141,7 @@ func TestLifecycleFuzzWired(t *testing.T) {
 
 // TestWebhooksScreenWired checks the webhook listener UI against the server API.
 func TestWebhooksScreenWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="webhook-form"`,
 		`id="webhook-deliveries"`,
@@ -160,7 +163,7 @@ func TestWebhooksScreenWired(t *testing.T) {
 
 // TestSnapshotsScreenWired checks the snapshot save/list/diff UI.
 func TestSnapshotsScreenWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="snapshot-save-form"`,
 		`id="snapshot-list"`,
@@ -181,7 +184,7 @@ func TestSnapshotsScreenWired(t *testing.T) {
 
 // TestReportsScreenWired checks the evidence report builder and downloads.
 func TestReportsScreenWired(t *testing.T) {
-	html, js := m6assets(t)
+	html, js := uiassets(t)
 	for _, want := range []string{
 		`id="report-form"`,
 		`id="report-html-btn"`,
