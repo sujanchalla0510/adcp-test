@@ -49,8 +49,10 @@ jobs:
       - name: Start the example mock seller
         run: |
           go build -o /tmp/adcp-test ./cmd/adcp-test
-          sed 's/127.0.0.1:8089/127.0.0.1:18089/' examples/mock-seller.yaml > /tmp/mock-seller-ci.yaml
-          /tmp/adcp-test mock --config /tmp/mock-seller-ci.yaml > /tmp/mock.log 2>&1 &
+          rm -rf /tmp/adcp-test-examples
+          cp -r examples /tmp/adcp-test-examples
+          sed -i 's/127.0.0.1:8089/127.0.0.1:18089/' /tmp/adcp-test-examples/mock-seller.yaml
+          /tmp/adcp-test mock --config /tmp/adcp-test-examples/mock-seller.yaml > /tmp/mock.log 2>&1 &
           echo $! > /tmp/mock.pid
           for i in $(seq 1 30); do
             curl -sf -X POST http://127.0.0.1:18089 \
