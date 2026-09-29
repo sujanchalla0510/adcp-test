@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -110,5 +111,138 @@ func TestRunMockMissingFlags(t *testing.T) {
 	}
 	if code := runMock([]string{"--config", "/nonexistent/mock.yaml"}); code == 0 {
 		t.Fatalf("exit code = %d, want non-zero for missing config file", code)
+	}
+}
+
+// scenarioFakeSeller answers the happy-path pack's tools with canned
+// synthetic results (same shape as the server package's test fake).
+func scenarioCLIFake(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+		switch req.Params.Name {
+		case "get_products":
+			resp["result"] = map[string]any{"products": []any{map[string]any{"product_id": "prod-web-banner"}}}
+		case "create_media_buy":
+			resp["result"] = map[string]any{"media_buy_id": "mb-1", "status": "draft"}
+		case "sync_creatives":
+			resp["result"] = map[string]any{"status": "approved"}
+		case "get_media_buy_delivery":
+			resp["result"] = map[string]any{"media_buy_id": req.Params.Arguments["media_buy_id"]}
+		case "update_media_buy":
+			resp["result"] = map[string]any{"status": req.Params.Arguments["status"]}
+		default:
+			resp["error"] = map[string]any{"code": -32601, "message": "no such tool"}
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRunScenarioList(t *testing.T) {
+	var buf bytes.Buffer
+	if code := runScenario([]string{"--list"}, &buf); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(buf.String(), "happy-path-media-buy") {
+		t.Errorf("--list output missing packs: %q", buf.String())
+	}
+}
+
+func TestRunScenarioMissingFlags(t *testing.T) {
+	var buf bytes.Buffer
+	if code := runScenario([]string{}, &buf); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing flags", code)
+	}
+	if code := runScenario([]string{"--pack", "no-such-pack", "--target", "http://127.0.0.1:1"}, &buf); code == 0 {
+		t.Fatalf("exit code = %d, want non-zero for unknown pack", code)
+	}
+}
+
+func TestRunScenarioPassAndFail(t *testing.T) {
+	fake := scenarioCLIFake(t)
+
+	// Happy path against the fake passes.
+	var buf bytes.Buffer
+	code := runScenario([]string{"--pack", "happy-path-media-buy", "--target", fake.URL}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+	var rep struct {
+		Summary struct {
+			Passed int `json:"passed"`
+			Failed int `json:"failed"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &rep); err != nil {
+		t.Fatalf("report is not JSON: %v", err)
+	}
+	if rep.Summary.Passed != 1 || rep.Summary.Failed != 0 {
+		t.Errorf("summary = %+v, want 1 passed 0 failed", rep.Summary)
+	}
+
+	// Creative-rejection pack fails against the fake (no rejection route).
+	buf.Reset()
+	if code := runScenario([]string{"--pack", "creative-rejection", "--target", fake.URL}, &buf); code != 1 {
+		t.Fatalf("exit code = %d, want 1 for failing pack", code)
+	}
+}
+
+func TestRunLoadMissingFlags(t *testing.T) {
+	var buf bytes.Buffer
+	if code := runLoad([]string{}, &buf); code != 2 {
+		t.Fatalf("exit code = %d, want 2 for missing --config", code)
+	}
+	if code := runLoad([]string{"--config", "/nonexistent/load.yaml"}, &buf); code == 0 {
+		t.Fatalf("exit code = %d, want non-zero for missing config", code)
+	}
+}
+
+func TestRunLoadHeadless(t *testing.T) {
+	fake := scenarioCLIFake(t)
+	dir := t.TempDir()
+	cfgPath := dir + "/load.yaml"
+	cfgYAML := "target_url: " + fake.URL + "\ntool: get_products\nconcurrency: 2\niterations: 10\nthresholds:\n  p99_ms_lt: 5000\n  error_rate_lt: 0.01\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if code := runLoad([]string{"--config", cfgPath}, &buf); code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+	var res struct {
+		TotalRequests int64   `json:"total_requests"`
+		P50Ms         float64 `json:"p50_ms"`
+		Passed        bool    `json:"passed"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
+		t.Fatalf("report is not JSON: %v\n%s", err, buf.String())
+	}
+	if res.TotalRequests != 10 || !res.Passed {
+		t.Errorf("result = %+v, want 10 requests passing", res)
+	}
+}
+
+func TestRunLoadRemoteGuard(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := dir + "/load.yaml"
+	cfgYAML := "target_url: https://seller.example.com/mcp\ntool: get_products\nconcurrency: 1\niterations: 1\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if code := runLoad([]string{"--config", cfgPath}, &buf); code == 0 {
+		t.Error("remote target without --allow-remote should fail")
 	}
 }

@@ -17,8 +17,8 @@
     <li><button data-screen="conformance">Conformance</button></li>
     <li><button data-screen="inspect">Inspect</button></li>
     <li><button data-screen="mock">Mock builder</button></li>
-    <li><button disabled title="M5 — coming soon">Scenarios</button></li>
-    <li><button disabled title="M5 — coming soon">Load</button></li>
+    <li><button data-screen="scenarios">Scenarios</button></li>
+    <li><button data-screen="load">Load</button></li>
     <li><button disabled title="M6 — coming soon">Snapshots</button></li>
     <li><button disabled title="M6 — coming soon">Reports</button></li>
   </ul>
@@ -32,7 +32,7 @@
         <li><strong>M2</strong> — Conformance core — <strong>live</strong>: open the Conformance screen to run it.</li>
         <li><strong>M3</strong> — Inspect + record/replay — <strong>live</strong>: open the Inspect screen to record traffic and replay cassettes.</li>
         <li><strong>M4</strong> — Mock builder (config-driven mock sellers) — <strong>live</strong>: open the Mock builder screen.</li>
-        <li><strong>M5</strong> — Scenarios + load</li>
+        <li><strong>M5</strong> — Scenarios + load — <strong>live</strong>: open the Scenarios or Load screens to run them.</li>
         <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports)</li>
       </ol>
       <p class="meta">Local-first: this app runs entirely on your machine. No telemetry, no uploads.</p>
@@ -47,6 +47,10 @@
       <p>Mock builder: <code>GET/PUT /api/mock/config</code>, <code>POST /api/mock/validate</code>,
          <code>POST /api/mock/start</code>, <code>POST /api/mock/stop</code>,
          <code>POST /api/mock/record</code>, <code>POST /api/mock/record/finish</code></p>
+      <p>Scenarios: <code>GET /api/scenarios</code>, <code>POST /api/scenarios/run</code>
+         with <code>{"pack": "happy-path-media-buy", "target_url": "https://seller.example/mcp"}</code></p>
+      <p>Load: <code>GET /api/load/presets</code>, <code>POST /api/load/run</code>,
+         <code>GET /api/load/results/{id}</code></p>
     </div>
   </section>
 
@@ -166,6 +170,112 @@
       </form>
       <div id="mock-record-status" aria-live="polite"></div>
     </div>
+  </section>
+
+  <section id="screen-scenarios" class="screen hidden">
+    <div class="card">
+      <h2>Scenarios</h2>
+      <p>Runnable scenario packs: ordered tool-call flows with per-step
+         assertions (<code>status</code>, <code>response_contains</code>,
+         <code>latency_ms_lt</code>, <code>error_code</code>). Steps can
+         chain values via <code>{{vars.name}}</code>. Every call is recorded
+         into a session you can inspect afterwards.</p>
+      <form id="scenario-target-form" class="mockform">
+        <label>Target MCP endpoint URL
+          <input id="scenario-target" type="url" placeholder="https://seller.example/mcp" required>
+        </label>
+        <label>Bearer token (optional)
+          <input id="scenario-bearer" type="password" placeholder="only if the seller requires it" autocomplete="off">
+        </label>
+      </form>
+      <div id="scenario-packs" aria-live="polite"><p class="meta">Loading packs…</p></div>
+    </div>
+    <div id="scenario-results" aria-live="polite"></div>
+  </section>
+
+  <section id="screen-load" class="screen hidden">
+    <div class="card">
+      <h2>Load</h2>
+      <p>Hammer a seller endpoint with concurrent virtual users running one
+         tool call or a whole scenario. Non-localhost targets are refused
+         unless you explicitly allow remote testing.</p>
+      <form id="load-form" class="mockform">
+        <div class="cols">
+          <div class="panel">
+            <h3>Workload</h3>
+            <label>Preset
+              <select id="load-preset">
+                <option value="">— custom —</option>
+              </select>
+            </label>
+            <label>Target MCP endpoint URL
+              <input id="load-target" type="url" placeholder="http://127.0.0.1:8080" required>
+            </label>
+            <label>Mode
+              <select id="load-mode">
+                <option value="tool">Single tool call</option>
+                <option value="scenario">Scenario pack</option>
+              </select>
+            </label>
+            <label id="load-tool-wrap">Tool name
+              <input id="load-tool" placeholder="get_products">
+            </label>
+            <label id="load-args-wrap">Arguments (JSON)
+              <textarea id="load-args" rows="3" placeholder='{"currency": "USD"}'>{}</textarea>
+            </label>
+            <label id="load-pack-wrap" class="hidden">Scenario pack
+              <select id="load-pack"></select>
+            </label>
+            <label id="load-scenario-name-wrap" class="hidden">Scenario name (optional, default: first)
+              <input id="load-scenario-name" placeholder="">
+            </label>
+          </div>
+          <div class="panel">
+            <h3>Shape &amp; thresholds</h3>
+            <label>Virtual users (concurrency)
+              <input id="load-concurrency" type="number" min="1" value="5">
+            </label>
+            <label>Ramp-up (e.g. 10s, 1m — blank for instant)
+              <input id="load-ramp" placeholder="10s">
+            </label>
+            <label>Duration (e.g. 60s, 5m)
+              <input id="load-duration" placeholder="60s" value="30s">
+            </label>
+            <label>Iterations (alternative to duration — blank to use duration)
+              <input id="load-iterations" type="number" min="1" placeholder="">
+            </label>
+            <label>p99 latency gate (ms)
+              <input id="load-p99" type="number" min="0" step="any" value="2000">
+            </label>
+            <label>Error-rate gate (0–1)
+              <input id="load-err" type="number" min="0" max="1" step="any" value="0.01">
+            </label>
+            <label>Timeout-rate gate (0–1)
+              <input id="load-timeout-rate" type="number" min="0" max="1" step="any" value="0.01">
+            </label>
+            <label class="checkline"><input id="load-allow-remote" type="checkbox"> Allow non-localhost target</label>
+          </div>
+        </div>
+        <div class="btnrow">
+          <button type="submit" id="load-run-btn" class="primary">Run load test</button>
+        </div>
+      </form>
+    </div>
+    <div class="card hidden" id="load-live-card">
+      <h3>Live</h3>
+      <div id="load-live" class="loadlive" aria-live="polite"></div>
+      <div class="cols">
+        <div class="panel">
+          <h4>Latency (ms)</h4>
+          <canvas id="load-chart-lat" class="chart" width="520" height="180"></canvas>
+        </div>
+        <div class="panel">
+          <h4>Throughput (req/s)</h4>
+          <canvas id="load-chart-rps" class="chart" width="520" height="180"></canvas>
+        </div>
+      </div>
+    </div>
+    <div id="load-results" aria-live="polite"></div>
   </section>
 </main>
 <script src="/app.js"></script>

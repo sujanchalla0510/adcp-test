@@ -14,10 +14,12 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sujanchalla0510/adcp-test/internal/config"
 	"github.com/sujanchalla0510/adcp-test/internal/conformance"
+	"github.com/sujanchalla0510/adcp-test/internal/load"
 	"github.com/sujanchalla0510/adcp-test/internal/recorder"
 	"github.com/sujanchalla0510/adcp-test/internal/session"
 	adcpweb "github.com/sujanchalla0510/adcp-test/web"
@@ -47,6 +49,11 @@ type Server struct {
 	mockRunning    []*runningMock
 	mockRecordings []*recordingProxy
 	mockSeq        int64
+
+	// Load results (M5) state.
+	loadMu      sync.Mutex
+	loadResults map[string]*load.Result
+	loadSeq     atomic.Int64
 }
 
 // New builds a Server from cfg.
@@ -57,11 +64,12 @@ func New(cfg *config.Config) *Server {
 		panic(fmt.Sprintf("adcp-test: embedded web assets missing: %v", err))
 	}
 	s := &Server{
-		cfg:       cfg,
-		sessions:  session.NewStore(),
-		cassettes: map[string]*storedCassette{},
-		replays:   map[string]*runningReplay{},
-		mockCfg:   defaultMockConfig,
+		cfg:         cfg,
+		sessions:    session.NewStore(),
+		cassettes:   map[string]*storedCassette{},
+		replays:     map[string]*runningReplay{},
+		mockCfg:     defaultMockConfig,
+		loadResults: map[string]*load.Result{},
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
@@ -69,6 +77,8 @@ func New(cfg *config.Config) *Server {
 	mux.HandleFunc("/api/conformance/run", conformanceRunHandler)
 	registerInspectRoutes(mux, s)
 	registerMockRoutes(mux, s)
+	registerScenarioRoutes(mux, s)
+	registerLoadRoutes(mux, s)
 	s.mux = mux
 	s.http = &http.Server{Handler: mux}
 	return s

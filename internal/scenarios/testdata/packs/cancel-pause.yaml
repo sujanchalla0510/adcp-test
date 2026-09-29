@@ -1,0 +1,55 @@
+# Cancel/pause flow: walk a media buy through active -> paused ->
+# cancelled, then verify the seller rejects the illegal
+# cancelled -> active transition with a structured error. Synthetic fixture.
+name: cancel-pause
+description: Pause and cancel a media buy; illegal transitions must fail with error -32001.
+scenarios:
+  - name: pause then cancel
+    description: Drive the media-buy lifecycle state machine through its legal moves and one illegal move.
+    steps:
+      - name: create media buy
+        tool: create_media_buy
+        arguments:
+          product_id: prod-web-banner
+          budget_micros: 2000000
+        save:
+          media_buy_id: media_buy_id
+        assertions:
+          - status: ok
+          - response_contains:
+              status: draft
+      - name: activate buy
+        tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: active
+        assertions:
+          - status: ok
+          - response_contains:
+              status: active
+      - name: pause buy
+        tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: paused
+        assertions:
+          - status: ok
+          - response_contains:
+              status: paused
+      - name: cancel buy
+        tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: cancelled
+        assertions:
+          - status: ok
+          - response_contains:
+              status: cancelled
+      - name: illegal re-activation fails
+        tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: active
+        assertions:
+          - status: error
+          - error_code: -32001

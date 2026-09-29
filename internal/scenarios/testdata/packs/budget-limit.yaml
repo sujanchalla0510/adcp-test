@@ -1,0 +1,33 @@
+# Budget-limit flow: over-limit budgets are rejected at creation time,
+# valid budgets create normally. Synthetic fixture.
+name: budget-limit
+description: Over-limit budgets are rejected; valid budgets create a draft buy.
+scenarios:
+  - name: budget enforcement
+    description: Attempt a buy far above the product maximum, then one within limits.
+    steps:
+      - name: over-limit buy is rejected
+        tool: create_media_buy
+        arguments:
+          product_id: prod-web-banner
+          budget_micros: 999999999999
+        assertions:
+          - status: ok
+          - response_contains:
+              status: rejected
+      - name: valid buy is created
+        tool: create_media_buy
+        arguments:
+          product_id: prod-web-banner
+          budget_micros: 5000000
+        save:
+          media_buy_id: media_buy_id
+        assertions:
+          - status: ok
+          - response_contains:
+              status: draft
+    teardown:
+      - tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: cancelled

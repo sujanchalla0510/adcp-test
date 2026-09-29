@@ -16,6 +16,15 @@
 //	    address. A mock with record: proxies the upstream seller and, on
 //	    Ctrl-C, writes the generated config to capture_to (or prints it
 //	    when capture_to is unset).
+//
+//	adcp-test scenario --pack happy-path-media-buy --target <seller-mcp-url>
+//	    Run a scenario pack headless. Prints the JSON report to stdout:
+//	    exit 0 when every scenario passes, 1 otherwise.
+//
+//	adcp-test load --config load.yaml
+//	    Run a load test headless. Prints the JSON report to stdout:
+//	    exit 0 when every threshold passes, 1 otherwise. Non-localhost
+//	    targets are refused unless --allow-remote is passed.
 package main
 
 import (
@@ -34,9 +43,11 @@ import (
 	"github.com/sujanchalla0510/adcp-test/internal/cassette"
 	"github.com/sujanchalla0510/adcp-test/internal/config"
 	"github.com/sujanchalla0510/adcp-test/internal/conformance"
+	"github.com/sujanchalla0510/adcp-test/internal/load"
 	"github.com/sujanchalla0510/adcp-test/internal/mockcfg"
 	"github.com/sujanchalla0510/adcp-test/internal/mockserver"
 	"github.com/sujanchalla0510/adcp-test/internal/recorder"
+	"github.com/sujanchalla0510/adcp-test/internal/scenarios"
 	"github.com/sujanchalla0510/adcp-test/internal/server"
 	"github.com/sujanchalla0510/adcp-test/internal/session"
 )
@@ -53,6 +64,10 @@ func main() {
 			os.Exit(runReplay(os.Args[2:]))
 		case "mock":
 			os.Exit(runMock(os.Args[2:]))
+		case "scenario":
+			os.Exit(runScenario(os.Args[2:], os.Stdout))
+		case "load":
+			os.Exit(runLoad(os.Args[2:], os.Stdout))
 		}
 	}
 
@@ -263,4 +278,141 @@ func waitForSignal() {
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	<-ch
 	fmt.Println()
+}
+
+// maxScenarioCI bounds a headless scenario run.
+const maxScenarioCI = 10 * time.Minute
+
+// runScenario runs a scenario pack headless: JSON report to stdout,
+// exit 0 when every scenario passes, 1 otherwise, 2 on usage errors.
+//
+//	adcp-test scenario --pack happy-path-media-buy --target <seller-mcp-url>
+//	adcp-test scenario --list
+func runScenario(args []string, stdout io.Writer) int {
+	fs := flag.NewFlagSet("scenario", flag.ContinueOnError)
+	packRef := fs.String("pack", "", "built-in pack id or path to a pack YAML file")
+	target := fs.String("target", "", "seller MCP endpoint URL")
+	bearer := fs.String("bearer-token", "", "bearer token for the target (optional)")
+	timeout := fs.Duration("timeout", 0, "per-step request timeout (0 = default 30s)")
+	list := fs.Bool("list", false, "list built-in packs and exit")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *list {
+		metas, err := scenarios.BuiltinPacks()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "scenario:", err)
+			return 1
+		}
+		for _, m := range metas {
+			fmt.Fprintf(stdout, "%-24s %d scenario(s) — %s\n", m.ID, m.ScenarioCount, m.Description)
+		}
+		return 0
+	}
+	if *packRef == "" || *target == "" {
+		fs.Usage()
+		return 2
+	}
+	pack, err := scenarios.ResolvePack(*packRef)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "scenario:", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxScenarioCI)
+	defer cancel()
+	rep, err := scenarios.Run(ctx, pack, *target, scenarios.Options{
+		Timeout:     *timeout,
+		BearerToken: *bearer,
+	})
+	if err != nil {
+		writeCIError(stdout, err.Error())
+		return 1
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(rep); err != nil {
+		writeCIError(stdout, "encode scenario report")
+		return 1
+	}
+	if rep.AllPassed() {
+		return 0
+	}
+	return 1
+}
+
+// runLoad runs a load test headless: JSON report to stdout, exit 0 when
+// every threshold passes, 1 otherwise, 2 on usage errors.
+//
+//	adcp-test load --config load.yaml [--allow-remote]
+func runLoad(args []string, stdout io.Writer) int {
+	fs := flag.NewFlagSet("load", flag.ContinueOnError)
+	configPath := fs.String("config", "", "load YAML config file (required)")
+	allowRemote := fs.Bool("allow-remote", false, "allow non-localhost targets")
+	target := fs.String("target", "", "override target_url from the config")
+	concurrency := fs.Int("concurrency", 0, "override concurrency from the config")
+	duration := fs.Duration("duration", 0, "override duration from the config")
+	iterations := fs.Int("iterations", 0, "override iterations from the config")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *configPath == "" {
+		fs.Usage()
+		return 2
+	}
+	data, err := os.ReadFile(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load:", err)
+		return 1
+	}
+	cfg, err := load.ParseConfig(data)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load:", err)
+		return 1
+	}
+	if *allowRemote {
+		cfg.AllowRemote = true
+	}
+	if *target != "" {
+		cfg.TargetURL = *target
+	}
+	if *concurrency > 0 {
+		cfg.Concurrency = *concurrency
+	}
+	if *duration > 0 {
+		cfg.Duration = *duration
+	}
+	if *iterations > 0 {
+		cfg.Iterations = *iterations
+	}
+	eng, err := load.New(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "load:", err)
+		return 1
+	}
+
+	// Progress to stderr keeps stdout clean JSON for CI.
+	progress := make(chan load.Progress, 64)
+	go func() {
+		for p := range progress {
+			fmt.Fprintf(os.Stderr, "\rload: %d req, %.0f rps, p99 %.0f ms, err %d, timeouts %d",
+				p.Completed, p.ThroughputRPS, p.P99Ms, p.Errors, p.Timeouts)
+		}
+		fmt.Fprintln(os.Stderr)
+	}()
+
+	res, err := eng.Run(context.Background(), progress)
+	if err != nil {
+		writeCIError(stdout, err.Error())
+		return 1
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(res); err != nil {
+		writeCIError(stdout, "encode load report")
+		return 1
+	}
+	if res.Passed {
+		return 0
+	}
+	return 1
 }

@@ -90,3 +90,18 @@ pre.mockyaml { max-height: 480px; white-space: pre-wrap; overflow-wrap: anywhere
 .smallbtn { padding: 0.25rem 0.6rem; font-size: 0.85rem; }
 .meta.ok { color: #137333; }
 #mock-record-status p { overflow-wrap: anywhere; }
+
+/* Scenarios + load (M5) */
+.packcard h3 { margin-top: 0; font-family: monospace; }
+.scncard h4 { margin: 0 0 0.5rem; }
+.steprow { display: grid; grid-template-columns: auto 1fr auto; gap: 0.25rem 0.75rem; align-items: baseline; padding: 0.5rem 0; border-top: 1px solid #eee; }
+.steprow:first-child { border-top: none; }
+.steprow .step-body { grid-column: 1 / -1; }
+.assertrow { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.2rem 0; }
+.assertrow code { font-size: 0.85rem; }
+.loadlive { margin-bottom: 0.75rem; }
+.loadstats { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 0.95rem; }
+.chart { width: 100%; height: auto; border: 1px solid #eee; border-radius: 6px; background: #fff; }
+#load-form .checkline { font-weight: 400; }
+#load-form .checkline input { display: inline; width: auto; margin-right: 0.4rem; }
+#load-form textarea { font-family: monospace; font-size: 0.85rem; }

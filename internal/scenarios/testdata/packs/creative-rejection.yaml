@@ -1,0 +1,46 @@
+# Creative rejection flow: the seller must reject policy-violating
+# creatives while approving clean ones. Synthetic fixture.
+name: creative-rejection
+description: Banned creatives are rejected; clean creatives are approved.
+scenarios:
+  - name: reject banned creative
+    description: Sync a policy-violating creative, expect rejection, then a clean one, expect approval.
+    steps:
+      - name: create media buy
+        tool: create_media_buy
+        arguments:
+          product_id: prod-web-banner
+          budget_micros: 1000000
+        save:
+          media_buy_id: media_buy_id
+        assertions:
+          - status: ok
+      - name: sync banned creative
+        tool: sync_creatives
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          creative:
+            format: banned
+            width: 300
+            height: 250
+        assertions:
+          - status: ok
+          - response_contains:
+              status: rejected
+      - name: sync clean creative
+        tool: sync_creatives
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          creative:
+            format: display
+            width: 300
+            height: 250
+        assertions:
+          - status: ok
+          - response_contains:
+              status: approved
+    teardown:
+      - tool: update_media_buy
+        arguments:
+          media_buy_id: "{{vars.media_buy_id}}"
+          status: cancelled

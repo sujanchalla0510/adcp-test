@@ -19,6 +19,12 @@ function showScreen(name) {
   if (name === "mock") {
     refreshMock().catch((err) => console.error("mock refresh failed", err));
   }
+  if (name === "scenarios") {
+    refreshScenarios().catch((err) => console.error("scenarios refresh failed", err));
+  }
+  if (name === "load") {
+    refreshLoad().catch((err) => console.error("load refresh failed", err));
+  }
 }
 
 function esc(s) {
@@ -746,4 +752,455 @@ async function finishMockRecord(ev) {
     status.innerHTML = errorCard(err.message);
     ev.target.disabled = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared SSE reader: POST a JSON body, stream event frames.
+// ---------------------------------------------------------------------------
+
+// readSSE posts body to url and invokes onEvent(eventName, data) for each
+// server-sent event frame until the stream closes.
+async function readSSE(url, body, onEvent) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let msg = "request failed";
+    try {
+      const errBody = await resp.json();
+      if (errBody && errBody.error) msg = errBody.error;
+    } catch (_) { /* keep default */ }
+    throw new Error(msg);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let event = "";
+  let data = "";
+  const flush = () => {
+    if (event) {
+      let parsed = null;
+      try { parsed = JSON.parse(data); } catch (_) { parsed = data; }
+      onEvent(event, parsed);
+    }
+    event = "";
+    data = "";
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).replace(/\r$/, "");
+      buf = buf.slice(idx + 1);
+      if (line === "") { flush(); continue; }
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data += line.slice(5);
+    }
+  }
+  flush();
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios screen: built-in packs as runnable cards, live progress,
+// drill into step results and assertion failures.
+// ---------------------------------------------------------------------------
+
+let scenarioPacks = [];
+let scenarioRunSeq = 0;
+
+async function refreshScenarios() {
+  const box = document.getElementById("scenario-packs");
+  try {
+    const resp = await fetch("/api/scenarios");
+    const body = await resp.json();
+    scenarioPacks = body.packs || [];
+  } catch (err) {
+    box.innerHTML = errorCard("could not load scenario packs: " + err.message);
+    return;
+  }
+  if (!scenarioPacks.length) {
+    box.innerHTML = '<p class="meta">No scenario packs available.</p>';
+    return;
+  }
+  box.innerHTML = scenarioPacks.map((p) => `
+    <div class="card packcard">
+      <h3>${esc(p.name)}</h3>
+      <p>${esc(p.description || "")}</p>
+      <p class="meta">${p.scenario_count} scenario(s): ${(p.scenarios || []).map(esc).join(", ")}</p>
+      <button type="button" data-pack="${esc(p.id)}" class="primary scenario-run-btn">Run</button>
+    </div>`).join("");
+  box.querySelectorAll(".scenario-run-btn").forEach((btn) => {
+    btn.addEventListener("click", () => runScenarioPack(btn.dataset.pack, btn));
+  });
+}
+
+async function runScenarioPack(packId, btn) {
+  const target = document.getElementById("scenario-target").value.trim();
+  const bearer = document.getElementById("scenario-bearer").value;
+  const results = document.getElementById("scenario-results");
+  if (!target) {
+    results.innerHTML = errorCard("Enter a target MCP endpoint URL first.");
+    return;
+  }
+  const runId = ++scenarioRunSeq;
+  const pack = scenarioPacks.find((p) => p.id === packId);
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = "Running…";
+  results.innerHTML = `
+    <div class="card"><h3>${esc(pack ? pack.name : packId)}</h3>
+    <p class="meta">Target: <code>${esc(target)}</code></p>
+    <div id="scenario-live-${runId}"></div></div>`;
+
+  const live = () => document.getElementById("scenario-live-" + runId);
+  const scenarioDivs = {};
+  try {
+    await readSSE("/api/scenarios/run", { pack: packId, target_url: target, bearer_token: bearer }, (event, data) => {
+      if (runId !== scenarioRunSeq) return; // superseded by a newer run
+      const el = live();
+      if (!el) return;
+      if (event === "scenario_started") {
+        const d = document.createElement("div");
+        d.className = "card scncard";
+        d.innerHTML = `<h4>${esc(data.scenario)}</h4><div class="scnsteps"></div>`;
+        el.appendChild(d);
+        scenarioDivs[data.scenario] = d.querySelector(".scnsteps");
+      } else if (event === "step_started") {
+        const steps = scenarioDivs[data.scenario];
+        if (steps) {
+          const row = document.createElement("div");
+          row.className = "steprow running";
+          row.id = `scn-${runId}-step-${data.step_index}`;
+          row.innerHTML = `<span class="badge skip">RUN</span>
+            <span class="check-name">${esc(data.step)}</span>
+            <span class="check-dur">…</span>`;
+          steps.appendChild(row);
+        }
+      } else if (event === "step_finished") {
+        const row = document.getElementById(`scn-${runId}-step-${data.step_index}`);
+        if (row && data.step_result) {
+          const sr = data.step_result;
+          row.className = "steprow";
+          const badge = sr.passed ? '<span class="badge pass">PASS</span>' : '<span class="badge fail">FAIL</span>';
+          const asserts = (sr.assertions || []).map((a) =>
+            `<div class="assertrow"><span class="badge ${a.passed ? "pass" : "fail"}">${a.passed ? "PASS" : "FAIL"}</span>
+             <code>${esc(a.kind)}</code>${a.detail ? ` <span class="meta">${esc(a.detail)}</span>` : ""}</div>`).join("");
+          row.innerHTML = `${badge}
+            <span class="check-name">${esc(sr.name)} <span class="meta">(${esc(sr.tool)})</span></span>
+            <span class="check-dur">${Number(sr.latency_ms).toFixed(0)} ms</span>
+            <div class="step-body"><details><summary>assertions (${(sr.assertions || []).length})</summary>
+              ${asserts || '<p class="meta">No assertions.</p>'}
+              ${sr.error ? `<p class="step-error">${esc(sr.error)}</p>` : ""}
+            </details></div>`;
+        }
+      } else if (event === "scenario_finished") {
+        // Step rows already reflect the outcome; nothing extra needed.
+      } else if (event === "report") {
+        const rep = data;
+        const s = rep.summary || { total: 0, passed: 0, failed: 0 };
+        const cls = s.failed > 0 ? "failed" : "passed";
+        const banner = document.createElement("div");
+        banner.className = "card summary " + cls;
+        banner.innerHTML = `<h3>Scenario report</h3>
+          <p>Pack: <code>${esc(rep.pack)}</code> — target <code>${esc(rep.target_url)}</code></p>
+          <p><strong>${s.passed}</strong> passed, <strong>${s.failed}</strong> failed, of ${s.total} scenarios.</p>
+          <p class="meta">Calls were recorded to the Inspect screen's session store.</p>`;
+        results.prepend(banner);
+      } else if (event === "error") {
+        results.prepend(errorCard("scenario run failed: " + (data && data.error ? data.error : "unknown error")));
+      }
+    });
+  } catch (err) {
+    results.prepend(errorCard("scenario run failed: " + err.message));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Load screen: form -> live charts + results with threshold verdicts.
+// ---------------------------------------------------------------------------
+
+let loadPresets = [];
+let loadSeries = null; // {lat: [...], rps: [...], t0}
+
+function loadSeriesInit() {
+  loadSeries = { lat: [], rps: [], t0: Date.now() };
+}
+
+async function refreshLoad() {
+  // Fill the preset select and the scenario-pack select (once each).
+  const presetSel = document.getElementById("load-preset");
+  if (presetSel && presetSel.options.length <= 1) {
+    try {
+      const resp = await fetch("/api/load/presets");
+      const body = await resp.json();
+      loadPresets = body.presets || [];
+      for (const p of loadPresets) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name + " — " + p.description;
+        presetSel.appendChild(opt);
+      }
+    } catch (err) {
+      console.error("load presets failed", err);
+    }
+  }
+  const packSel = document.getElementById("load-pack");
+  if (packSel && packSel.options.length === 0) {
+    try {
+      const resp = await fetch("/api/scenarios");
+      const body = await resp.json();
+      for (const p of body.packs || []) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        packSel.appendChild(opt);
+      }
+    } catch (err) {
+      console.error("scenario packs for load failed", err);
+    }
+  }
+}
+
+const loadForm = document.getElementById("load-form");
+if (loadForm) {
+  loadForm.addEventListener("submit", runLoadTest);
+  document.getElementById("load-mode").addEventListener("change", (e) => {
+    const isScenario = e.target.value === "scenario";
+    document.getElementById("load-tool-wrap").classList.toggle("hidden", isScenario);
+    document.getElementById("load-args-wrap").classList.toggle("hidden", isScenario);
+    document.getElementById("load-pack-wrap").classList.toggle("hidden", !isScenario);
+    document.getElementById("load-scenario-name-wrap").classList.toggle("hidden", !isScenario);
+  });
+  document.getElementById("load-preset").addEventListener("change", (e) => {
+    const p = loadPresets.find((x) => x.id === e.target.value);
+    if (p) applyLoadPreset(p);
+  });
+}
+
+// applyLoadPreset fills the load form from a preset's YAML (flat keys only).
+function applyLoadPreset(preset) {
+  const get = (key) => {
+    const m = preset.yaml.match(new RegExp("^" + key + ":\\s*(.+)$", "m"));
+    return m ? m[1].trim() : "";
+  };
+  const set = (id, v) => { if (v) document.getElementById(id).value = v; };
+  set("load-target", get("target_url"));
+  const tool = get("tool");
+  if (tool) {
+    document.getElementById("load-mode").value = "tool";
+    document.getElementById("load-mode").dispatchEvent(new Event("change"));
+    set("load-tool", tool);
+  }
+  set("load-concurrency", get("concurrency"));
+  set("load-ramp", get("ramp_up"));
+  set("load-duration", get("duration"));
+  set("load-iterations", get("iterations"));
+  const th = preset.yaml.match(/^thresholds:\n((?:  .+\n?)+)/m);
+  if (th) {
+    const tv = (k) => {
+      const m = th[1].match(new RegExp("^  " + k + ":\\s*(.+)$", "m"));
+      return m ? m[1].trim() : "";
+    };
+    set("load-p99", tv("p99_ms_lt"));
+    set("load-err", tv("error_rate_lt"));
+    set("load-timeout-rate", tv("timeout_rate_lt"));
+  }
+}
+
+function loadFormConfig() {
+  const val = (id) => document.getElementById(id).value.trim();
+  const isScenario = document.getElementById("load-mode").value === "scenario";
+  let args = {};
+  if (!isScenario) {
+    const raw = val("load-args") || "{}";
+    try {
+      args = JSON.parse(raw);
+    } catch (err) {
+      throw new Error("arguments is not valid JSON: " + err.message);
+    }
+  }
+  const cfg = {
+    target_url: val("load-target"),
+    concurrency: parseInt(val("load-concurrency") || "1", 10),
+    ramp_up: val("load-ramp"),
+    duration: val("load-duration"),
+    allow_remote: document.getElementById("load-allow-remote").checked,
+    thresholds: {},
+  };
+  const iters = val("load-iterations");
+  if (iters) cfg.iterations = parseInt(iters, 10);
+  if (isScenario) {
+    cfg.scenario = document.getElementById("load-pack").value;
+    const sn = val("load-scenario-name");
+    if (sn) cfg.scenario_name = sn;
+  } else {
+    cfg.tool = val("load-tool");
+    cfg.arguments = args;
+  }
+  const p99 = val("load-p99");
+  if (p99 !== "") cfg.thresholds.p99_ms_lt = parseFloat(p99);
+  const er = val("load-err");
+  if (er !== "") cfg.thresholds.error_rate_lt = parseFloat(er);
+  const tr = val("load-timeout-rate");
+  if (tr !== "") cfg.thresholds.timeout_rate_lt = parseFloat(tr);
+  return cfg;
+}
+
+async function runLoadTest(event) {
+  event.preventDefault();
+  const btn = document.getElementById("load-run-btn");
+  const liveCard = document.getElementById("load-live-card");
+  const live = document.getElementById("load-live");
+  const results = document.getElementById("load-results");
+  let cfg;
+  try {
+    cfg = loadFormConfig();
+  } catch (err) {
+    results.innerHTML = errorCard(err.message);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Running…";
+  results.innerHTML = "";
+  liveCard.classList.remove("hidden");
+  loadSeriesInit();
+  live.innerHTML = '<p class="meta">Starting…</p>';
+  drawCharts();
+
+  try {
+    await readSSE("/api/load/run", cfg, (evName, data) => {
+      if (evName === "progress") {
+        const t = (data.elapsed_ms || 0) / 1000;
+        loadSeries.lat.push({ t, p50: data.p50_ms, p99: data.p99_ms });
+        loadSeries.rps.push({ t, rps: data.throughput_rps });
+        live.innerHTML = `
+          <div class="loadstats">
+            <span><strong>${data.completed}</strong> req</span>
+            <span><strong>${Number(data.throughput_rps).toFixed(1)}</strong> rps</span>
+            <span>p50 <strong>${Number(data.p50_ms).toFixed(0)}</strong> ms</span>
+            <span>p99 <strong>${Number(data.p99_ms).toFixed(0)}</strong> ms</span>
+            <span>errors <strong>${data.errors}</strong></span>
+            <span>timeouts <strong>${data.timeouts}</strong></span>
+          </div>`;
+        drawCharts();
+      } else if (evName === "result") {
+        results.innerHTML = renderLoadResult(data.result, data.id);
+      } else if (evName === "error") {
+        results.innerHTML = errorCard("load test failed: " + (data && data.error ? data.error : "unknown error"));
+      }
+    });
+  } catch (err) {
+    results.innerHTML = errorCard("load test failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run load test";
+  }
+}
+
+function renderLoadResult(res, id) {
+  const cls = res.passed ? "passed" : "failed";
+  const verdict = (tr) => `
+    <div class="check"><span class="badge ${tr.passed ? "pass" : "fail"}">${tr.passed ? "PASS" : "FAIL"}</span>
+    <span class="check-name">${esc(tr.name)} &lt; ${esc(String(tr.limit))}</span>
+    <span class="check-dur">actual ${esc(String(round4(tr.actual)))}</span>
+    ${tr.detail ? `<details><summary>detail</summary><p>${esc(tr.detail)}</p></details>` : ""}</div>`;
+  return `
+    <div class="card summary ${cls}"><h3>Load result</h3>
+      <p>Run id: <code>${esc(id)}</code> — <strong>${res.passed ? "PASSED" : "FAILED"}</strong></p>
+      <p><strong>${res.total_requests}</strong> requests in ${(Number(res.duration_ms) / 1000).toFixed(1)}s
+         (${Number(res.throughput_rps).toFixed(1)} rps)</p>
+    </div>
+    <div class="card"><h3>Latency &amp; rates</h3>
+      <p>p50 <strong>${Number(res.p50_ms).toFixed(1)}</strong> ms ·
+         p95 <strong>${Number(res.p95_ms).toFixed(1)}</strong> ms ·
+         p99 <strong>${Number(res.p99_ms).toFixed(1)}</strong> ms</p>
+      <p>errors <strong>${res.errors}</strong> (${(Number(res.error_rate) * 100).toFixed(2)}%) ·
+         timeouts <strong>${res.timeouts}</strong> (${(Number(res.timeout_rate) * 100).toFixed(2)}%)</p>
+    </div>
+    <div class="card"><h3>Thresholds</h3>
+      ${(res.thresholds || []).map(verdict).join("") || '<p class="meta">No thresholds configured.</p>'}
+      <p class="meta"><a href="/api/load/results/${esc(id)}" target="_blank" rel="noopener">raw JSON</a></p>
+    </div>`;
+}
+
+function round4(n) {
+  return Math.round(Number(n) * 10000) / 10000;
+}
+
+// drawCharts renders the live latency and throughput series on canvas.
+function drawCharts() {
+  drawLineChart("load-chart-lat", loadSeries ? loadSeries.lat : [],
+    [(p) => p.p50, (p) => p.p99], ["#1a73e8", "#c5221f"], ["p50", "p99"], "ms");
+  drawLineChart("load-chart-rps", loadSeries ? loadSeries.rps : [],
+    [(p) => p.rps], ["#137333"], ["rps"], "rps");
+}
+
+function drawLineChart(canvasId, points, getters, colors, labels, unit) {
+  const cv = document.getElementById(canvasId);
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, W, H);
+  const pad = { l: 44, r: 8, t: 8, b: 20 };
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  let maxV = 1, maxT = 1;
+  for (const p of points) {
+    if (p.t > maxT) maxT = p.t;
+    for (const g of getters) {
+      const v = g(p) || 0;
+      if (v > maxV) maxV = v;
+    }
+  }
+  maxV *= 1.1;
+  // axes
+  ctx.strokeStyle = "#ddd";
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t);
+  ctx.lineTo(pad.l, pad.t + ih);
+  ctx.lineTo(pad.l + iw, pad.t + ih);
+  ctx.stroke();
+  // y labels
+  ctx.fillStyle = "#666";
+  ctx.font = "10px sans-serif";
+  ctx.fillText("0", 6, pad.t + ih);
+  ctx.fillText(fmtNum(maxV) + " " + unit, 6, pad.t + 10);
+  ctx.fillText(fmtNum(maxT) + "s", pad.l + iw - 30, H - 6);
+  // series
+  getters.forEach((g, gi) => {
+    ctx.strokeStyle = colors[gi % colors.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    let started = false;
+    for (const p of points) {
+      const x = pad.l + (p.t / maxT) * iw;
+      const y = pad.t + ih - ((g(p) || 0) / maxV) * ih;
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+  // legend
+  ctx.font = "10px sans-serif";
+  labels.forEach((lb, i) => {
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillRect(pad.l + i * 52, H - 12, 10, 8);
+    ctx.fillStyle = "#333";
+    ctx.fillText(lb, pad.l + i * 52 + 13, H - 4);
+  });
+}
+
+function fmtNum(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  if (n >= 100) return n.toFixed(0);
+  if (n >= 1) return n.toFixed(1);
+  return n.toFixed(2);
 }
