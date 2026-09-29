@@ -9,8 +9,8 @@ request-signing auth model. The conformance tool surface matches the v3-era task
 list (`get_adcp_capabilities`, `get_products`, `list_creative_formats`,
 `create_media_buy`, `update_media_buy`, `get_media_buys`, `sync_creatives`,
 `sync_catalogs`, `list_creatives`, `get_media_buy_delivery`, `get_signals`).
-When the spec moves, spec-upgrade diffs are on the roadmap (M7) so you can see
-exactly what a new version changes about your integration.
+When the spec moves, `adcp-test specdiff` shows exactly what a new version
+changes about your integration — see [specdiff.md](specdiff.md).
 
 ## Install
 
@@ -146,8 +146,8 @@ attach to a launch review.
 ```
 
 Exit code 0 means every check passed; non-zero means something failed — the
-JSON report has the per-check detail. A GitHub Action wrapper is on the M7
-roadmap.
+JSON report has the per-check detail. A GitHub Action wrapper is available —
+see [ci-action.md](ci-action.md).
 
 ## Notes
 

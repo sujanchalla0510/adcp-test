@@ -3,41 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>adcp-test — AdCP integration test suite</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header>
-  <h1>adcp-test</h1>
-  <p class="tagline">The integration test suite for AdCP buyer and seller agents.</p>
-</header>
-<nav>
-  <ul>
-    <li><button data-screen="dashboard" class="active">Dashboard</button></li>
-    <li><button data-screen="conformance">Conformance</button></li>
-    <li><button data-screen="inspect">Inspect</button></li>
-    <li><button data-screen="mock">Mock builder</button></li>
-    <li><button data-screen="scenarios">Scenarios</button></li>
-    <li><button data-screen="load">Load</button></li>
-    <li><button data-screen="signdebug">Signdebug</button></li>
-    <li><button data-screen="webhooks">Webhooks</button></li>
-    <li><button data-screen="snapshots">Snapshots</button></li>
-    <li><button data-screen="reports">Reports</button></li>
-  </ul>
-</nav>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">a/</span>
+      <h1>adcp-test</h1>
+    </div>
+    <nav aria-label="Screens">
+      <ul>
+        <li><button data-screen="dashboard" class="active">Dashboard</button></li>
+        <li><button data-screen="conformance">Conformance</button></li>
+        <li><button data-screen="inspect">Inspect</button></li>
+        <li><button data-screen="mock">Mock builder</button></li>
+        <li><button data-screen="scenarios">Scenarios</button></li>
+        <li><button data-screen="load">Load</button></li>
+        <li><button data-screen="signdebug">Signdebug</button></li>
+        <li><button data-screen="webhooks">Webhooks</button></li>
+        <li><button data-screen="snapshots">Snapshots</button></li>
+        <li><button data-screen="reports">Reports</button></li>
+      </ul>
+    </nav>
+  </div>
+</div>
 <main>
   <section id="screen-dashboard" class="screen">
-    <div class="card">
-      <h2>Welcome</h2>
-      <p>Everything here runs locally — no telemetry, no uploads. Pick a capability:</p>
-      <ul>
-        <li><strong>Conformance</strong> — run the 24-check suite against a seller endpoint.</li>
-        <li><strong>Inspect</strong> — record live traffic, save cassettes, replay them deterministically.</li>
-        <li><strong>Mock builder</strong> — config-driven fake sellers for testing buyer agents.</li>
-        <li><strong>Scenarios</strong> / <strong>Load</strong> — scripted buying flows, load tests, chaos mode.</li>
-        <li><strong>Signdebug</strong> — debug RFC 9421 signature rejections.</li>
-      </ul>
-      <p class="meta">Local-first: this app runs entirely on your machine. No telemetry, no uploads.</p>
+    <div class="hero">
+      <h2>Test your AdCP integration</h2>
+      <p>The integration test suite for AdCP buyer and seller agents.
+         Everything here runs locally — no telemetry, no uploads.
+         Pick a capability to get started.</p>
+    </div>
+    <div class="capgrid">
+      <div class="capcard">
+        <h3>Conformance</h3>
+        <p>Run the 24-check suite against a seller endpoint: tool surface, schemas, auth, error taxonomy — plus protocol fuzzing.</p>
+        <button type="button" data-goto="conformance">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Inspect</h3>
+        <p>Record live MCP traffic through a proxy, inspect every tool call on a timeline, save cassettes, replay them deterministically.</p>
+        <button type="button" data-goto="inspect">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Mock builder</h3>
+        <p>Config-driven fake sellers for testing buyer agents: routes, latency profiles, fault injection, lifecycle state machine.</p>
+        <button type="button" data-goto="mock">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Scenarios</h3>
+        <p>Runnable scenario packs with per-step assertions, chaos mode, and full media-buy lifecycle checks.</p>
+        <button type="button" data-goto="scenarios">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Load</h3>
+        <p>Hammer an endpoint with concurrent virtual users, live latency/throughput charts, and threshold gates.</p>
+        <button type="button" data-goto="load">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Signdebug</h3>
+        <p>Debug RFC 9421 signature rejections: reconstruct the signature base and pinpoint exactly what mismatches.</p>
+        <button type="button" data-goto="signdebug">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Webhooks</h3>
+        <p>Capture webhook deliveries on a localhost listener and inspect headers and bodies on a timeline.</p>
+        <button type="button" data-goto="webhooks">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Snapshots</h3>
+        <p>Save named run reports and diff two snapshots to see which checks flipped.</p>
+        <button type="button" data-goto="snapshots">Open</button>
+      </div>
+      <div class="capcard">
+        <h3>Reports</h3>
+        <p>Assemble self-contained HTML or PDF evidence packs from your run reports.</p>
+        <button type="button" data-goto="reports">Open</button>
+      </div>
     </div>
     <div class="card">
       <h2>API</h2>
@@ -68,10 +114,12 @@
   </section>
 
   <section id="screen-conformance" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Conformance</h2>
       <p>Point at a seller agent's MCP endpoint and run the conformance suite:
          tool surface, input schemas, auth behavior, error taxonomy.</p>
+    </div>
+    <div class="card">
       <form id="conformance-form">
         <label>Target MCP endpoint URL
           <input type="url" id="target-url" name="target_url"
@@ -81,7 +129,9 @@
           <input type="password" id="bearer-token" name="bearer_token"
                  placeholder="only if the seller requires bearer auth" autocomplete="off">
         </label>
-        <button type="submit" id="run-btn">Run conformance</button>
+        <div class="btnrow">
+          <button type="submit" id="run-btn" class="primary">Run conformance</button>
+        </div>
       </form>
       <p class="meta">Probes are read-only observations of how the endpoint responds.
         The unsigned and malformed-signature probes use deliberately invalid
@@ -97,24 +147,30 @@
         <label>Target MCP endpoint URL
           <input type="url" id="fuzz-target" placeholder="http://127.0.0.1:PORT/mcp" required>
         </label>
-        <label>Iterations
-          <input type="number" id="fuzz-iterations" value="200" min="1" max="2000">
-        </label>
-        <label>Seed (optional, 0 = random — recorded for replay)
-          <input type="number" id="fuzz-seed" value="0" min="0">
-        </label>
+        <div class="grid2">
+          <label>Iterations
+            <input type="number" id="fuzz-iterations" value="200" min="1" max="2000">
+          </label>
+          <label>Seed <span class="meta">(optional, 0 = random — recorded for replay)</span>
+            <input type="number" id="fuzz-seed" value="0" min="0">
+          </label>
+        </div>
         <label class="checkline"><input type="checkbox" id="fuzz-allow-remote"> allow non-localhost target</label>
-        <button type="submit" id="fuzz-run-btn">Run fuzzer</button>
+        <div class="btnrow">
+          <button type="submit" id="fuzz-run-btn" class="primary">Run fuzzer</button>
+        </div>
       </form>
     </div>
     <div id="fuzz-results" aria-live="polite"></div>
   </section>
 
   <section id="screen-inspect" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Inspect</h2>
       <p>Record live MCP traffic through a proxy, inspect every tool call on a
          timeline, save cassettes, and replay them as a fake seller.</p>
+    </div>
+    <div class="card">
       <div class="cols">
         <div class="panel">
           <h3>Record</h3>
@@ -122,7 +178,9 @@
             <label>Upstream seller MCP URL
               <input type="url" id="record-upstream" placeholder="https://seller.example/mcp" required>
             </label>
-            <button type="submit" id="record-start-btn">Start recording proxy</button>
+            <div class="btnrow">
+              <button type="submit" id="record-start-btn" class="primary">Start recording proxy</button>
+            </div>
           </form>
           <div id="record-status" aria-live="polite"></div>
         </div>
@@ -133,7 +191,9 @@
               <select id="replay-cassette"></select>
             </label>
             <label class="checkline"><input type="checkbox" id="replay-strict"> strict argument matching</label>
-            <button type="submit" id="replay-start-btn">Start replay server</button>
+            <div class="btnrow">
+              <button type="submit" id="replay-start-btn" class="primary">Start replay server</button>
+            </div>
           </form>
           <div id="replay-status" aria-live="polite"></div>
         </div>
@@ -153,13 +213,15 @@
   </section>
 
   <section id="screen-mock" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Mock builder</h2>
       <p>Describe fake seller services as YAML: routes match tool calls by
          name and argument patterns, and answer with inline JSON, fixture
          files, sequences, or <code>{{args.*}}</code> templates — with
          latency profiles, fault injection, and a media-buy lifecycle
          state machine.</p>
+    </div>
+    <div class="card">
       <div id="mock-multi-note"></div>
       <div class="cols">
         <div class="panel">
@@ -199,20 +261,24 @@
         <label>Upstream seller MCP URL
           <input id="mock-record-url" type="url" placeholder="https://seller.example/mcp" required>
         </label>
-        <button type="submit" id="mock-record-start-btn" class="primary">Start capture</button>
+        <div class="btnrow">
+          <button type="submit" id="mock-record-start-btn" class="primary">Start capture</button>
+        </div>
       </form>
       <div id="mock-record-status" aria-live="polite"></div>
     </div>
   </section>
 
   <section id="screen-scenarios" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Scenarios</h2>
       <p>Runnable scenario packs: ordered tool-call flows with per-step
          assertions (<code>status</code>, <code>response_contains</code>,
          <code>latency_ms_lt</code>, <code>error_code</code>). Steps can
          chain values via <code>{{vars.name}}</code>. Every call is recorded
          into a session you can inspect afterwards.</p>
+    </div>
+    <div class="card">
       <form id="scenario-target-form" class="mockform">
         <label>Target MCP endpoint URL
           <input id="scenario-target" type="url" placeholder="https://seller.example/mcp" required>
@@ -222,11 +288,13 @@
         </label>
         <label class="checkline"><input type="checkbox" id="scenario-chaos">
           chaos mode — inject random faults and latency spikes into every run</label>
-        <label>Chaos seed (optional, 0 = random — recorded in the report for replay)
-          <input id="scenario-chaos-seed" type="number" value="0" min="0">
-        </label>
-        <label class="checkline"><input type="checkbox" id="scenario-allow-remote">
-          allow chaos against a non-localhost target (off by default)</label>
+        <div class="grid2">
+          <label>Chaos seed <span class="meta">(optional, 0 = random — recorded in the report for replay)</span>
+            <input id="scenario-chaos-seed" type="number" value="0" min="0">
+          </label>
+          <label class="checkline"><input type="checkbox" id="scenario-allow-remote">
+            allow chaos against a non-localhost target (off by default)</label>
+        </div>
       </form>
       <div id="scenario-packs" aria-live="polite"><p class="meta">Loading packs…</p></div>
     </div>
@@ -235,18 +303,22 @@
       <p>Walk one media buy through create → activate → pause → resume → cancel
          against the target above, then verify the illegal cancelled → active
          transition is rejected with a structured error.</p>
-      <button type="button" id="lifecycle-run-btn" class="primary">Run lifecycle check</button>
+      <div class="btnrow">
+        <button type="button" id="lifecycle-run-btn" class="primary">Run lifecycle check</button>
+      </div>
     </div>
     <div id="lifecycle-results" aria-live="polite"></div>
     <div id="scenario-results" aria-live="polite"></div>
   </section>
 
   <section id="screen-load" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Load</h2>
       <p>Hammer a seller endpoint with concurrent virtual users running one
          tool call or a whole scenario. Non-localhost targets are refused
          unless you explicitly allow remote testing.</p>
+    </div>
+    <div class="card">
       <form id="load-form" class="mockform">
         <div class="cols">
           <div class="panel">
@@ -283,24 +355,26 @@
             <label>Virtual users (concurrency)
               <input id="load-concurrency" type="number" min="1" value="5">
             </label>
-            <label>Ramp-up (e.g. 10s, 1m — blank for instant)
+            <label>Ramp-up <span class="meta">(e.g. 10s, 1m — blank for instant)</span>
               <input id="load-ramp" placeholder="10s">
             </label>
-            <label>Duration (e.g. 60s, 5m)
+            <label>Duration <span class="meta">(e.g. 60s, 5m)</span>
               <input id="load-duration" placeholder="60s" value="30s">
             </label>
-            <label>Iterations (alternative to duration — blank to use duration)
+            <label>Iterations <span class="meta">(alternative to duration — blank to use duration)</span>
               <input id="load-iterations" type="number" min="1" placeholder="">
             </label>
             <label>p99 latency gate (ms)
               <input id="load-p99" type="number" min="0" step="any" value="2000">
             </label>
-            <label>Error-rate gate (0–1)
-              <input id="load-err" type="number" min="0" max="1" step="any" value="0.01">
-            </label>
-            <label>Timeout-rate gate (0–1)
-              <input id="load-timeout-rate" type="number" min="0" max="1" step="any" value="0.01">
-            </label>
+            <div class="grid3">
+              <label>Error-rate gate (0–1)
+                <input id="load-err" type="number" min="0" max="1" step="any" value="0.01">
+              </label>
+              <label>Timeout-rate gate (0–1)
+                <input id="load-timeout-rate" type="number" min="0" max="1" step="any" value="0.01">
+              </label>
+            </div>
             <label class="checkline"><input id="load-allow-remote" type="checkbox"> Allow non-localhost target</label>
           </div>
         </div>
@@ -327,13 +401,15 @@
   </section>
 
   <section id="screen-signdebug" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Signing debugger</h2>
       <p>Paste a signed HTTP request and the verification key: the debugger
          reconstructs the RFC 9421 signature base, verifies the signature, and
          pinpoints exactly what mismatches. <strong>The key is used in memory
          for this one check only — it is never stored, logged, or sent
          anywhere else.</strong></p>
+    </div>
+    <div class="card">
       <form id="signdebug-form" class="mockform">
         <div class="cols">
           <label>HTTP method
@@ -343,38 +419,46 @@
             <input id="sd-url" type="url" placeholder="https://seller.example/mcp" required>
           </label>
         </div>
-        <label>Headers (one <code>Name: value</code> per line — include
-          <code>Signature-Input</code> and <code>Signature</code>)
+        <label>Headers <span class="meta">(one <code>Name: value</code> per line — include
+          <code>Signature-Input</code> and <code>Signature</code>)</span>
           <textarea id="sd-headers" rows="6" placeholder="Signature-Input: sig1=(&quot;@method&quot; &quot;@target-uri&quot;);created=…&#10;Signature: sig1=:base64:&#10;Content-Digest: sha-512=:…:"></textarea>
         </label>
         <label>Request body (raw)
           <textarea id="sd-body" rows="4" placeholder='{"jsonrpc":"2.0",…}'></textarea>
         </label>
-        <label>Verification key (PEM public or private key; raw secret for hmac-sha256)
+        <label>Verification key <span class="meta">(PEM public or private key; raw secret for hmac-sha256)</span>
           <textarea id="sd-key" rows="5" placeholder="-----BEGIN PUBLIC KEY-----" autocomplete="off"></textarea>
         </label>
-        <label>Expected signature base (optional — paste what your signer computed, to diff)
+        <label>Expected signature base <span class="meta">(optional — paste what your signer computed, to diff)</span>
           <textarea id="sd-expected" rows="4" placeholder="&quot;@method&quot;: post"></textarea>
         </label>
-        <button type="submit" id="sd-verify-btn" class="primary">Verify signature</button>
+        <div class="btnrow">
+          <button type="submit" id="sd-verify-btn" class="primary">Verify signature</button>
+        </div>
       </form>
     </div>
     <div id="signdebug-results" aria-live="polite"></div>
   </section>
 
   <section id="screen-webhooks" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Webhooks</h2>
       <p>Start a localhost listener, point the seller's webhook configuration at
          the printed URL, and watch deliveries land on the timeline below.
          Authorization-style headers are redacted in the capture.</p>
+    </div>
+    <div class="card">
       <form id="webhook-form" class="mockform">
-        <label>Port (0 = pick a free one)
-          <input id="webhook-port" type="number" value="0" min="0" max="65535">
-        </label>
-        <button type="submit" id="webhook-start-btn" class="primary">Start listener</button>
-        <button type="button" id="webhook-stop-btn">Stop</button>
-        <button type="button" id="webhook-clear-btn">Clear deliveries</button>
+        <div class="cols">
+          <label>Port <span class="meta">(0 = pick a free one)</span>
+            <input id="webhook-port" type="number" value="0" min="0" max="65535">
+          </label>
+        </div>
+        <div class="btnrow">
+          <button type="submit" id="webhook-start-btn" class="primary">Start listener</button>
+          <button type="button" id="webhook-stop-btn">Stop</button>
+          <button type="button" id="webhook-clear-btn">Clear deliveries</button>
+        </div>
       </form>
       <p class="meta" id="webhook-url"></p>
     </div>
@@ -382,10 +466,12 @@
   </section>
 
   <section id="screen-snapshots" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Snapshots</h2>
       <p>Save named JSON reports (conformance, scenario, load, lifecycle, fuzz)
          and diff two snapshots to see which checks flipped.</p>
+    </div>
+    <div class="card">
       <form id="snapshot-save-form" class="mockform">
         <div class="cols">
           <label>Kind
@@ -401,10 +487,12 @@
             <input id="snap-name" placeholder="baseline-seller-a">
           </label>
         </div>
-        <label>Report JSON (or leave empty to snapshot the last run of that kind)
+        <label>Report JSON <span class="meta">(or leave empty to snapshot the last run of that kind)</span>
           <textarea id="snap-report" rows="5" placeholder='{"checks": […]}'></textarea>
         </label>
-        <button type="submit" class="primary">Save snapshot</button>
+        <div class="btnrow">
+          <button type="submit" class="primary">Save snapshot</button>
+        </div>
       </form>
     </div>
     <div class="card">
@@ -418,18 +506,22 @@
           <label>Before <select id="snap-before"></select></label>
           <label>After <select id="snap-after"></select></label>
         </div>
-        <button type="submit" class="primary">Diff snapshots</button>
+        <div class="btnrow">
+          <button type="submit" class="primary">Diff snapshots</button>
+        </div>
       </form>
       <div id="snapshot-diff-results" aria-live="polite"></div>
     </div>
   </section>
 
   <section id="screen-reports" class="screen hidden">
-    <div class="card">
+    <div class="pagehead">
       <h2>Reports</h2>
       <p>Assemble a self-contained evidence pack from run reports — an HTML
          bundle with inline CSS, or a PDF export. Paste report JSON, or tick
          “use last run” to reuse the latest result from each screen.</p>
+    </div>
+    <div class="card">
       <form id="report-form" class="mockform">
         <label>Title
           <input id="report-title" placeholder="Seller A — integration evidence">
@@ -448,6 +540,9 @@
     </div>
   </section>
 </main>
+<footer>
+  <p><code>adcp-test</code> — local-first AdCP integration testing. No telemetry, no uploads.</p>
+</footer>
 <script src="/app.js"></script>
 </body>
 </html>
