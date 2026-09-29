@@ -308,10 +308,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) toolList() []map[string]any {
 	out := make([]map[string]any, 0, len(s.routes))
 	for _, rr := range s.routes {
+		schema := map[string]any{"type": "object"}
+		if rr.cfg.InputSchema != nil {
+			if m, ok := rr.cfg.InputSchema.(map[string]any); ok {
+				schema = m
+			}
+		}
 		out = append(out, map[string]any{
 			"name":        rr.cfg.Match.Tool,
 			"description": "mock route from adcp-test",
-			"inputSchema": map[string]any{"type": "object"},
+			"inputSchema": schema,
 		})
 	}
 	return out
@@ -389,6 +395,12 @@ func (s *Server) handleCall(w http.ResponseWriter, ctx context.Context, req rpcR
 			_, _ = w.Write([]byte("this is not JSON {{{"))
 			return
 		}
+	}
+
+	// Static error responses (mocked rejections).
+	if e := rr.cfg.Respond.Error; e != nil {
+		writeRPCError(w, req.ID, e.Code, e.Message, e.Data)
+		return
 	}
 
 	payload, err := s.buildPayload(rr, callNum, templateContext{

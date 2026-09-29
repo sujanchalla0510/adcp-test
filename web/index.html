@@ -19,8 +19,10 @@
     <li><button data-screen="mock">Mock builder</button></li>
     <li><button data-screen="scenarios">Scenarios</button></li>
     <li><button data-screen="load">Load</button></li>
-    <li><button disabled title="M6 — coming soon">Snapshots</button></li>
-    <li><button disabled title="M6 — coming soon">Reports</button></li>
+    <li><button data-screen="signdebug">Signdebug</button></li>
+    <li><button data-screen="webhooks">Webhooks</button></li>
+    <li><button data-screen="snapshots">Snapshots</button></li>
+    <li><button data-screen="reports">Reports</button></li>
   </ul>
 </nav>
 <main>
@@ -33,7 +35,7 @@
         <li><strong>M3</strong> — Inspect + record/replay — <strong>live</strong>: open the Inspect screen to record traffic and replay cassettes.</li>
         <li><strong>M4</strong> — Mock builder (config-driven mock sellers) — <strong>live</strong>: open the Mock builder screen.</li>
         <li><strong>M5</strong> — Scenarios + load — <strong>live</strong>: open the Scenarios or Load screens to run them.</li>
-        <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports)</li>
+        <li><strong>M6</strong> — Polish + v0.1 launch (signing debugger, lifecycle, fuzzing, chaos, snapshots, reports) — <strong>live</strong></li>
       </ol>
       <p class="meta">Local-first: this app runs entirely on your machine. No telemetry, no uploads.</p>
     </div>
@@ -51,6 +53,17 @@
          with <code>{"pack": "happy-path-media-buy", "target_url": "https://seller.example/mcp"}</code></p>
       <p>Load: <code>GET /api/load/presets</code>, <code>POST /api/load/run</code>,
          <code>GET /api/load/results/{id}</code></p>
+      <p>Signdebug: <code>POST /api/signdebug/verify</code> with
+         <code>{"request": {"method": "POST", "url": "…", "headers": {}, "body": "…"}, "key_pem": "…"}</code>
+         — the key is used in memory only, never stored.</p>
+      <p>Lifecycle: <code>POST /api/lifecycle/run</code> with <code>{"target_url": "…"}</code></p>
+      <p>Fuzz: <code>POST /api/fuzz/run</code> with <code>{"target_url": "…", "iterations": 200}</code></p>
+      <p>Webhooks: <code>POST /api/webhooks/listen</code>, <code>GET /api/webhooks/deliveries</code>,
+         <code>POST /api/webhooks/clear</code>, <code>POST /api/webhooks/stop</code></p>
+      <p>Snapshots: <code>GET /api/snapshots</code>, <code>POST /api/snapshots/save</code>,
+         <code>GET /api/snapshots/diff?before=&amp;after=</code>, <code>POST /api/snapshots/delete</code></p>
+      <p>Reports: <code>POST /api/reports/build</code> with report JSON fields and
+         <code>"format": "html"|"pdf"</code> — returns the evidence pack as a download.</p>
     </div>
   </section>
 
@@ -75,6 +88,26 @@
         arguments, so a conforming seller can never act on them.</p>
     </div>
     <div id="conformance-results" aria-live="polite"></div>
+    <div class="card">
+      <h2>Protocol fuzz</h2>
+      <p>Throw malformed and random JSON-RPC payloads at the endpoint and record
+         crashes, hangs, and non-JSON responses. Localhost targets only, unless
+         you tick allow-remote.</p>
+      <form id="fuzz-form" class="mockform">
+        <label>Target MCP endpoint URL
+          <input type="url" id="fuzz-target" placeholder="http://127.0.0.1:PORT/mcp" required>
+        </label>
+        <label>Iterations
+          <input type="number" id="fuzz-iterations" value="200" min="1" max="2000">
+        </label>
+        <label>Seed (optional, 0 = random — recorded for replay)
+          <input type="number" id="fuzz-seed" value="0" min="0">
+        </label>
+        <label class="checkline"><input type="checkbox" id="fuzz-allow-remote"> allow non-localhost target</label>
+        <button type="submit" id="fuzz-run-btn">Run fuzzer</button>
+      </form>
+    </div>
+    <div id="fuzz-results" aria-live="polite"></div>
   </section>
 
   <section id="screen-inspect" class="screen hidden">
@@ -187,9 +220,24 @@
         <label>Bearer token (optional)
           <input id="scenario-bearer" type="password" placeholder="only if the seller requires it" autocomplete="off">
         </label>
+        <label class="checkline"><input type="checkbox" id="scenario-chaos">
+          chaos mode — inject random faults and latency spikes into every run</label>
+        <label>Chaos seed (optional, 0 = random — recorded in the report for replay)
+          <input id="scenario-chaos-seed" type="number" value="0" min="0">
+        </label>
+        <label class="checkline"><input type="checkbox" id="scenario-allow-remote">
+          allow chaos against a non-localhost target (off by default)</label>
       </form>
       <div id="scenario-packs" aria-live="polite"><p class="meta">Loading packs…</p></div>
     </div>
+    <div class="card">
+      <h2>Lifecycle check</h2>
+      <p>Walk one media buy through create → activate → pause → resume → cancel
+         against the target above, then verify the illegal cancelled → active
+         transition is rejected with a structured error.</p>
+      <button type="button" id="lifecycle-run-btn" class="primary">Run lifecycle check</button>
+    </div>
+    <div id="lifecycle-results" aria-live="polite"></div>
     <div id="scenario-results" aria-live="polite"></div>
   </section>
 
@@ -276,6 +324,128 @@
       </div>
     </div>
     <div id="load-results" aria-live="polite"></div>
+  </section>
+
+  <section id="screen-signdebug" class="screen hidden">
+    <div class="card">
+      <h2>Signing debugger</h2>
+      <p>Paste a signed HTTP request and the verification key: the debugger
+         reconstructs the RFC 9421 signature base, verifies the signature, and
+         pinpoints exactly what mismatches. <strong>The key is used in memory
+         for this one check only — it is never stored, logged, or sent
+         anywhere else.</strong></p>
+      <form id="signdebug-form" class="mockform">
+        <div class="cols">
+          <label>HTTP method
+            <input id="sd-method" value="POST">
+          </label>
+          <label>Request URL
+            <input id="sd-url" type="url" placeholder="https://seller.example/mcp" required>
+          </label>
+        </div>
+        <label>Headers (one <code>Name: value</code> per line — include
+          <code>Signature-Input</code> and <code>Signature</code>)
+          <textarea id="sd-headers" rows="6" placeholder="Signature-Input: sig1=(&quot;@method&quot; &quot;@target-uri&quot;);created=…&#10;Signature: sig1=:base64:&#10;Content-Digest: sha-512=:…:"></textarea>
+        </label>
+        <label>Request body (raw)
+          <textarea id="sd-body" rows="4" placeholder='{"jsonrpc":"2.0",…}'></textarea>
+        </label>
+        <label>Verification key (PEM public or private key; raw secret for hmac-sha256)
+          <textarea id="sd-key" rows="5" placeholder="-----BEGIN PUBLIC KEY-----" autocomplete="off"></textarea>
+        </label>
+        <label>Expected signature base (optional — paste what your signer computed, to diff)
+          <textarea id="sd-expected" rows="4" placeholder="&quot;@method&quot;: post"></textarea>
+        </label>
+        <button type="submit" id="sd-verify-btn" class="primary">Verify signature</button>
+      </form>
+    </div>
+    <div id="signdebug-results" aria-live="polite"></div>
+  </section>
+
+  <section id="screen-webhooks" class="screen hidden">
+    <div class="card">
+      <h2>Webhooks</h2>
+      <p>Start a localhost listener, point the seller's webhook configuration at
+         the printed URL, and watch deliveries land on the timeline below.
+         Authorization-style headers are redacted in the capture.</p>
+      <form id="webhook-form" class="mockform">
+        <label>Port (0 = pick a free one)
+          <input id="webhook-port" type="number" value="0" min="0" max="65535">
+        </label>
+        <button type="submit" id="webhook-start-btn" class="primary">Start listener</button>
+        <button type="button" id="webhook-stop-btn">Stop</button>
+        <button type="button" id="webhook-clear-btn">Clear deliveries</button>
+      </form>
+      <p class="meta" id="webhook-url"></p>
+    </div>
+    <div id="webhook-deliveries" aria-live="polite"></div>
+  </section>
+
+  <section id="screen-snapshots" class="screen hidden">
+    <div class="card">
+      <h2>Snapshots</h2>
+      <p>Save named JSON reports (conformance, scenario, load, lifecycle, fuzz)
+         and diff two snapshots to see which checks flipped.</p>
+      <form id="snapshot-save-form" class="mockform">
+        <div class="cols">
+          <label>Kind
+            <select id="snap-kind">
+              <option value="conformance">conformance</option>
+              <option value="scenario">scenario</option>
+              <option value="load">load</option>
+              <option value="lifecycle">lifecycle</option>
+              <option value="fuzz">fuzz</option>
+            </select>
+          </label>
+          <label>Name
+            <input id="snap-name" placeholder="baseline-seller-a">
+          </label>
+        </div>
+        <label>Report JSON (or leave empty to snapshot the last run of that kind)
+          <textarea id="snap-report" rows="5" placeholder='{"checks": […]}'></textarea>
+        </label>
+        <button type="submit" class="primary">Save snapshot</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>Saved snapshots</h3>
+      <div id="snapshot-list" aria-live="polite"><p class="meta">Loading…</p></div>
+    </div>
+    <div class="card">
+      <h3>Diff</h3>
+      <form id="snapshot-diff-form" class="mockform">
+        <div class="cols">
+          <label>Before <select id="snap-before"></select></label>
+          <label>After <select id="snap-after"></select></label>
+        </div>
+        <button type="submit" class="primary">Diff snapshots</button>
+      </form>
+      <div id="snapshot-diff-results" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section id="screen-reports" class="screen hidden">
+    <div class="card">
+      <h2>Reports</h2>
+      <p>Assemble a self-contained evidence pack from run reports — an HTML
+         bundle with inline CSS, or a PDF export. Paste report JSON, or tick
+         “use last run” to reuse the latest result from each screen.</p>
+      <form id="report-form" class="mockform">
+        <label>Title
+          <input id="report-title" placeholder="Seller A — integration evidence">
+        </label>
+        <div id="report-inputs"></div>
+        <div class="cols">
+          <label>Snapshot diff: before <select id="report-diff-before"><option value="">—</option></select></label>
+          <label>Snapshot diff: after <select id="report-diff-after"><option value="">—</option></select></label>
+        </div>
+        <div class="btnrow">
+          <button type="button" id="report-html-btn" class="primary">Download HTML</button>
+          <button type="button" id="report-pdf-btn">Download PDF</button>
+        </div>
+      </form>
+      <div id="report-status" aria-live="polite"></div>
+    </div>
   </section>
 </main>
 <script src="/app.js"></script>

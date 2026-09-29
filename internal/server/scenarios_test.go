@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sujanchalla0510/adcp-test/internal/scenarios"
 )
 
 // scenarioFakeSeller answers the happy-path pack's tools with canned
@@ -98,8 +100,12 @@ func TestScenariosListEndpoint(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Packs) != 4 {
-		t.Fatalf("packs = %d, want 4", len(body.Packs))
+	metas, err := scenarios.BuiltinPacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Packs) != len(metas) {
+		t.Fatalf("packs = %d, want %d (builtin pack count)", len(body.Packs), len(metas))
 	}
 	for _, p := range body.Packs {
 		if p.ScenarioCount == 0 {
@@ -181,5 +187,51 @@ func TestScenarioRunEndpointBadPack(t *testing.T) {
 		t.Fatalf("status = %d, want 400", res.StatusCode)
 	} else {
 		res.Body.Close()
+	}
+}
+
+// TestScenarioRunEndpointChaosGuard: a chaos run against a non-localhost
+// target is refused by the API with an SSE error event; with allow_remote
+// the guard is bypassed (the run then fails on transport, not the guard).
+func TestScenarioRunEndpointChaosGuard(t *testing.T) {
+	srv := newTestServer()
+	run := func(body map[string]any) map[string][]json.RawMessage {
+		reqBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/scenarios/run", bytes.NewReader(reqBody))
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		res := rec.Result()
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", res.StatusCode)
+		}
+		return sseEvents(t, res.Body)
+	}
+
+	events := run(map[string]any{
+		"pack": "happy-path-media-buy", "target_url": "https://seller.example/mcp",
+		"chaos": true, "chaos_seed": 1,
+	})
+	if len(events["error"]) != 1 {
+		t.Fatalf("error events = %d, want 1", len(events["error"]))
+	}
+	if !strings.Contains(string(events["error"][0]), "non-localhost") {
+		t.Errorf("expected a localhost-guard error, got: %s", events["error"][0])
+	}
+	if len(events["report"]) != 0 {
+		t.Error("guarded run must not produce a report")
+	}
+
+	events = run(map[string]any{
+		"pack": "happy-path-media-buy", "target_url": "https://seller.example/mcp",
+		"chaos": true, "chaos_seed": 1, "allow_remote": true,
+	})
+	for _, raw := range events["error"] {
+		if strings.Contains(string(raw), "non-localhost") {
+			t.Errorf("guard fired despite allow_remote: %s", raw)
+		}
+	}
+	if len(events["report"]) != 1 {
+		t.Fatalf("report events = %d, want 1 (run proceeds past the guard)", len(events["report"]))
 	}
 }

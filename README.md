@@ -1,6 +1,60 @@
 # adcp-test
 
-The integration test suite for AdCP. One local web app that answers **"does my AdCP implementation actually work?"** — for buyer agents and seller agents.
+**v0.1 — launched.** The integration test suite for AdCP. One local web app that answers **"does my AdCP implementation actually work?"** — for buyer agents and seller agents.
+
+## What v0.1 ships
+
+- **Conformance** — functional pass/fail of a seller endpoint: tool surface, input schemas, auth behavior, error codes (24 checks; headless `--ci` for CI pipelines)
+- **Inspect** — session timeline debugger with inline schema checks
+- **Record / replay** — cassettes for deterministic buyer tests
+- **Mock builder** — config-driven mock seller services (request matching, response sequences, latency profiles, fault injection, lifecycle state machines), with record mode that generates configs from real traffic
+- **Scenarios** — scripted end-to-end buying scenarios as runnable cards, with chaos mode
+- **Load** — concurrent sessions, live latency/throughput charts, CI thresholds
+- **Signing debugger** — paste a signed request + key; reconstructs the RFC 9421 signature base, verifies, and pinpoints the mismatch
+- **Lifecycle checks** — create → activate → pause → resume → cancel, plus the illegal cancelled → active transition
+- **Protocol fuzzer** — malformed / truncated / oversized JSON-RPC payloads with crash and hang detection
+- **Webhook listener** — localhost capture timeline for seller callbacks
+- **Snapshots** — named report snapshots with pass/fail diffs for regression tracking
+- **Evidence reports** — self-contained HTML evidence packs (+ PDF export) assembled from run reports
+
+UI-first: a single Go binary serves the app on localhost. Everything runs
+on your machine — **no telemetry, no uploads, no accounts, ever.**
+
+![Dashboard](docs/screenshots/dashboard.png)
+![Conformance results](docs/screenshots/conformance.png)
+
+## Install
+
+Requirements: Go 1.27+.
+
+```sh
+git clone https://github.com/sujanchalla0510/adcp-test.git
+cd adcp-test
+go build -o adcp-test ./cmd/adcp-test
+./adcp-test            # serves the UI on http://127.0.0.1:18742
+```
+
+Or run without building: `go run ./cmd/adcp-test`.
+
+## UI quickstart
+
+1. **Dashboard** — milestone status and API surface overview.
+2. **Conformance** — enter a seller's MCP endpoint URL, run the 24-check
+   suite, drill into failures.
+3. **Scenarios** — pick a pack card, set the target, run; tick **chaos
+   mode** to inject faults (the seed in the report replays the run).
+4. **Load** — configure concurrency/ramp/duration, watch live charts,
+   check CI thresholds.
+5. **Signdebug** — paste request + key, verify the RFC 9421 signature.
+6. **Webhooks** — start the localhost listener, point the seller at the
+   printed URL, watch deliveries land.
+7. **Snapshots** — save named reports; diff two snapshots to spot
+   regressions.
+8. **Reports** — assemble an HTML/PDF evidence pack from run reports.
+
+A full copy-paste walkthrough against a synthetic mock seller lives in
+[examples/README.md](examples/README.md): start mock → conformance →
+scenario → evidence report.
 
 ## Vision
 
@@ -24,16 +78,20 @@ UI-first: a single Go binary serves the app on localhost. A headless `--ci` mode
 
 ## Status
 
-M1 scaffold (done) → M2 conformance core (done: MCP client, tool-surface / schema / auth / error checks, Conformance screen, `--ci --target`) → M3 inspect + record/replay (done: session timeline, recording proxy, cassettes, replay server) → M4 mock builder (done: config-driven mock sellers, request matching, sequences, latency, faults, lifecycle state machine, record mode) → M5 scenarios + load (done: scenario packs, runner, load engine, live charts, CI thresholds) → M6 polish + v0.1 launch → M7 GitHub Action, MCP server, spec-upgrade diffs.
+v0.1 shipped: M1 scaffold → M2 conformance core → M3 inspect + record/replay →
+M4 mock builder → M5 scenarios + load → M6 polish + launch (signing debugger,
+lifecycle, fuzzing, chaos, webhooks, snapshots, reports). Next: M7 GitHub
+Action, MCP server, spec-upgrade diffs.
 
-Private repo until v0.1; public at launch.
+Public repository: https://github.com/sujanchalla0510/adcp-test
 
 ## Run it
 
 ```sh
-go run ./cmd/adcp-test            # serves the UI on http://127.0.0.1:18742
-go run ./cmd/adcp-test --port 8080
-go run ./cmd/adcp-test --ci --target https://seller.example/mcp  # headless conformance: JSON report on stdout, exit 0 when all checks pass, 1 otherwise
+go build -o adcp-test ./cmd/adcp-test
+./adcp-test            # serves the UI on http://127.0.0.1:18742
+./adcp-test --port 8080
+./adcp-test --ci --target https://seller.example/mcp  # headless conformance: JSON report on stdout, exit 0 when all checks pass, 1 otherwise
 ```
 
 ### Conformance
@@ -89,9 +147,9 @@ The Inspect screen records live MCP traffic and replays it deterministically:
 CLI equivalents (no UI needed):
 
 ```sh
-go run ./cmd/adcp-test record --upstream https://seller.example/mcp --out session.cassette.json
+./adcp-test record --upstream https://seller.example/mcp --out session.cassette.json
 # point your buyer at the printed proxy URL; Ctrl-C writes the cassette
-go run ./cmd/adcp-test replay --cassette session.cassette.json --port 18743 [--strict]
+./adcp-test replay --cassette session.cassette.json --port 18743 [--strict]
 # fake seller on http://127.0.0.1:18743; Ctrl-C stops
 ```
 
@@ -152,8 +210,8 @@ cancelled, plus an illegal transition asserting `error_code: -32001`),
 CLI:
 
 ```sh
-go run ./cmd/adcp-test scenario --list
-go run ./cmd/adcp-test scenario --pack happy-path-media-buy --target https://seller.example/mcp
+./adcp-test scenario --list
+./adcp-test scenario --pack happy-path-media-buy --target https://seller.example/mcp
 # --pack also accepts a path to your own pack YAML file
 # JSON report on stdout; exit 0 when every scenario passes, 1 otherwise
 ```
@@ -189,7 +247,7 @@ thresholds:
 ```
 
 ```sh
-go run ./cmd/adcp-test load --config load.yaml
+./adcp-test load --config load.yaml
 # JSON report on stdout; exit 0 when every threshold passes, 1 otherwise
 # --target / --concurrency / --duration / --iterations override the config
 ```
@@ -203,6 +261,132 @@ API: `GET /api/load/presets` (smoke / ramp / soak starters);
 fields streams `progress` events then a final `result` event
 `{"id": ..., "result": ...}`; `GET /api/load/results/{id}` retrieves a
 finished run's report.
+
+### Signing debugger
+
+Paste a signed HTTP request and the verification key: the debugger
+reconstructs the RFC 9421 signature base from the covered components,
+verifies the signature (Ed25519, ECDSA, RSA, HMAC), and pinpoints exactly
+what mismatches — wrong key, tampered body (content-digest), expired
+`created`/`expires`, or a base that differs from what your signer computed
+(paste it as "expected base" for a line-by-line diff).
+
+```sh
+./adcp-test signdebug --request req.json --key key.pem [--expected-base base.txt]
+```
+
+`req.json`: `{"method": "POST", "url": "...", "headers": {...}, "body": "..."}`.
+API: `POST /api/signdebug/verify`.
+
+**Key safety:** the key is used in memory for that one verification only.
+It is never stored, logged, recorded into sessions, or included in reports —
+the UI clears the key field the moment the check completes.
+
+### Lifecycle checks
+
+Walk one media buy through create → activate → pause → resume → cancel,
+then verify the illegal cancelled → active transition is rejected with a
+structured JSON-RPC error (`-32001`).
+
+```sh
+./adcp-test lifecycle --target https://seller.example/mcp [--bearer-token T]
+```
+
+JSON report on stdout; exit 0 when every check passes. A built-in
+`lifecycle` scenario pack runs the same flow with per-step assertions.
+API: `POST /api/lifecycle/run`.
+
+### Protocol fuzzer
+
+Throw malformed, truncated, deeply nested, oversized, batched, mistyped,
+and unknown-method JSON-RPC payloads at the endpoint and record crashes,
+hangs, non-JSON responses, and transport errors. Generation is seeded:
+the report records the seed, so any run replays exactly.
+
+```sh
+./adcp-test fuzz --target http://127.0.0.1:8089 --iterations 200 [--seed 42]
+```
+
+**Safety:** fuzzing targets localhost only. Non-localhost targets are
+refused unless you pass `--allow-remote`. API: `POST /api/fuzz/run`.
+
+### Chaos mode
+
+Every scenario run can inject seeded, reproducible chaos: dropped tool
+calls and latency spikes. Steps that were injected are badged ⚡ in the
+report, and the report records the seed plus configured rates, so the
+exact fault pattern replays.
+
+```sh
+./adcp-test scenario --pack happy-path-media-buy \
+    --target http://127.0.0.1:8089 --chaos --chaos-seed 42
+```
+
+Same localhost guard as load/fuzz: remote targets are refused unless
+explicitly allowed. API: `POST /api/scenarios/run` with
+`{"chaos": true, "chaos_seed": 42}`.
+
+### Webhook listener
+
+Start a localhost-only listener, point the seller's webhook configuration
+at the printed URL, and watch deliveries land on an ordered timeline with
+pretty-printed bodies. Authorization-style headers are redacted at
+capture; bodies can be truncated.
+
+```sh
+./adcp-test webhook-listen --port 8090 [--out deliveries.json]
+```
+
+API: `POST /api/webhooks/listen`, `GET /api/webhooks/deliveries`,
+`POST /api/webhooks/clear`, `POST /api/webhooks/stop`.
+
+### Snapshots
+
+Save named JSON reports (conformance, scenario, load, lifecycle, fuzz)
+under `./snapshots/` and diff two snapshots to see which checks flipped
+pass → fail, fail → pass, new, or removed — the regression-tracking
+workflow.
+
+```sh
+./adcp-test snapshot save --kind conformance --name baseline --file conformance.json
+./adcp-test snapshot diff --before baseline --after candidate
+./adcp-test snapshot delete --name old-baseline
+```
+
+API: `GET /api/snapshots`, `POST /api/snapshots/save`,
+`GET /api/snapshots/diff?before=&after=`, `POST /api/snapshots/delete`.
+
+### Evidence reports
+
+Assemble a self-contained evidence pack from run reports: an HTML bundle
+with inline CSS (no external requests), plus an optional PDF export.
+Include a snapshot diff section for before/after evidence.
+
+```sh
+./adcp-test report --conformance c.json --scenarios s.json --load l.json \
+    --lifecycle lc.json --fuzz f.json --diff-before baseline --diff-after candidate \
+    --title "Seller A — integration evidence" \
+    --out evidence.html --pdf evidence.pdf
+```
+
+Any input may be omitted. API: `POST /api/reports/build` with
+`"format": "html"|"pdf"` returns the pack as a download.
+
+### Worked example
+
+A complete copy-paste flow against a synthetic mock seller (all fixtures
+invented for testing — no real sellers, no real money):
+
+```sh
+./adcp-test mock --config examples/mock-seller.yaml   # terminal 1: mock on 127.0.0.1:8089
+./adcp-test --ci --target http://127.0.0.1:8089 > conformance.json
+./adcp-test scenario --pack happy-path-media-buy --target http://127.0.0.1:8089 > scenario.json
+./adcp-test report --conformance conformance.json --scenarios scenario.json \
+    --out evidence.html --pdf evidence.pdf
+```
+
+See [examples/README.md](examples/README.md) for the annotated version,
+including the web-UI equivalent.
 
 ## License
 

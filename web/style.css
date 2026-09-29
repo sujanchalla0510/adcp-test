@@ -105,3 +105,19 @@ pre.mockyaml { max-height: 480px; white-space: pre-wrap; overflow-wrap: anywhere
 #load-form .checkline { font-weight: 400; }
 #load-form .checkline input { display: inline; width: auto; margin-right: 0.4rem; }
 #load-form textarea { font-family: monospace; font-size: 0.85rem; }
+
+/* M6 screens */
+.badge.chaos { background: #4a2c00; color: #ffc978; border: 1px solid #a56b1e; }
+.btnrow { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
+.prewrap { white-space: pre-wrap; word-break: break-word; background: #0d1117; padding: 0.6rem; border-radius: 6px; font-size: 0.85em; max-height: 24rem; overflow: auto; }
+#signdebug-form .cols, #snapshot-save-form .cols, #snapshot-diff-form .cols, #report-form .cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem;
+}
+.mockform .checkline, #report-inputs .checkline { font-weight: 400; }
+.mockform .checkline input, #report-inputs .checkline input { display: inline; width: auto; margin-right: 0.4rem; }
+.mockform textarea, #report-inputs textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.9em; }
+#report-inputs { display: grid; gap: 0.8rem; margin: 0.8rem 0; }
+#report-inputs .panel { border: 1px solid #30363d; border-radius: 8px; padding: 0.8rem; }
+.snap-del-btn { background: #3d1117; color: #ff9aa2; border: 1px solid #8c1d2a; border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; }
+#lifecycle-run-btn, .primary { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 0.55rem 1rem; cursor: pointer; font-weight: 600; }
+#lifecycle-run-btn:disabled, .primary:disabled { opacity: 0.5; cursor: default; }

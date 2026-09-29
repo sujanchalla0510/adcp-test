@@ -25,6 +25,18 @@ function showScreen(name) {
   if (name === "load") {
     refreshLoad().catch((err) => console.error("load refresh failed", err));
   }
+  if (name === "webhooks") {
+    refreshWebhooks().catch((err) => console.error("webhooks refresh failed", err));
+  }
+  if (name === "snapshots") {
+    refreshSnapshots().catch((err) => console.error("snapshots refresh failed", err));
+  }
+  if (name === "reports") {
+    refreshReports().catch((err) => console.error("reports refresh failed", err));
+  }
+  if (name !== "webhooks") {
+    stopWebhookPoll();
+  }
 }
 
 function esc(s) {
@@ -32,6 +44,10 @@ function esc(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[c]);
 }
+
+// lastReports keeps the latest run report per kind so the Snapshots and
+// Reports screens can reuse them without re-running.
+const lastReports = { conformance: null, scenarios: null, load: null, lifecycle: null, fuzz: null };
 
 // Conformance screen: POST the target URL, render the report.
 const conformanceForm = document.getElementById("conformance-form");
@@ -63,6 +79,7 @@ async function runConformance(event) {
     if (!resp.ok) {
       results.innerHTML = errorCard(report.error || "request failed");
     } else {
+      lastReports.conformance = report;
       results.innerHTML = renderReport(report);
     }
   } catch (err) {
@@ -841,6 +858,9 @@ async function refreshScenarios() {
 async function runScenarioPack(packId, btn) {
   const target = document.getElementById("scenario-target").value.trim();
   const bearer = document.getElementById("scenario-bearer").value;
+  const chaos = document.getElementById("scenario-chaos").checked;
+  const chaosSeed = Number(document.getElementById("scenario-chaos-seed").value) || 0;
+  const allowRemote = document.getElementById("scenario-allow-remote").checked;
   const results = document.getElementById("scenario-results");
   if (!target) {
     results.innerHTML = errorCard("Enter a target MCP endpoint URL first.");
@@ -859,7 +879,7 @@ async function runScenarioPack(packId, btn) {
   const live = () => document.getElementById("scenario-live-" + runId);
   const scenarioDivs = {};
   try {
-    await readSSE("/api/scenarios/run", { pack: packId, target_url: target, bearer_token: bearer }, (event, data) => {
+    await readSSE("/api/scenarios/run", { pack: packId, target_url: target, bearer_token: bearer, chaos: chaos, chaos_seed: chaosSeed, allow_remote: allowRemote }, (event, data) => {
       if (runId !== scenarioRunSeq) return; // superseded by a newer run
       const el = live();
       if (!el) return;
@@ -889,7 +909,9 @@ async function runScenarioPack(packId, btn) {
           const asserts = (sr.assertions || []).map((a) =>
             `<div class="assertrow"><span class="badge ${a.passed ? "pass" : "fail"}">${a.passed ? "PASS" : "FAIL"}</span>
              <code>${esc(a.kind)}</code>${a.detail ? ` <span class="meta">${esc(a.detail)}</span>` : ""}</div>`).join("");
-          row.innerHTML = `${badge}
+          const chaosMark = sr.chaos
+            ? `<span class="badge chaos" title="${esc(sr.chaos.detail)}">CHAOS: ${esc(sr.chaos.injected)}</span>` : "";
+          row.innerHTML = `${badge}${chaosMark}
             <span class="check-name">${esc(sr.name)} <span class="meta">(${esc(sr.tool)})</span></span>
             <span class="check-dur">${Number(sr.latency_ms).toFixed(0)} ms</span>
             <div class="step-body"><details><summary>assertions (${(sr.assertions || []).length})</summary>
@@ -901,6 +923,7 @@ async function runScenarioPack(packId, btn) {
         // Step rows already reflect the outcome; nothing extra needed.
       } else if (event === "report") {
         const rep = data;
+        lastReports.scenarios = rep;
         const s = rep.summary || { total: 0, passed: 0, failed: 0 };
         const cls = s.failed > 0 ? "failed" : "passed";
         const banner = document.createElement("div");
@@ -908,6 +931,9 @@ async function runScenarioPack(packId, btn) {
         banner.innerHTML = `<h3>Scenario report</h3>
           <p>Pack: <code>${esc(rep.pack)}</code> — target <code>${esc(rep.target_url)}</code></p>
           <p><strong>${s.passed}</strong> passed, <strong>${s.failed}</strong> failed, of ${s.total} scenarios.</p>
+          ${rep.chaos ? `<p class="meta">Chaos: seed <code>${rep.chaos.seed}</code>, ` +
+            `${rep.chaos.injected_faults} dropped calls, ${rep.chaos.injected_spikes} latency spikes, ` +
+            `${rep.chaos.steps_survived}/${rep.chaos.total_steps} injected steps survived.</p>` : ""}
           <p class="meta">Calls were recorded to the Inspect screen's session store.</p>`;
         results.prepend(banner);
       } else if (event === "error") {
@@ -1091,6 +1117,7 @@ async function runLoadTest(event) {
           </div>`;
         drawCharts();
       } else if (evName === "result") {
+        lastReports.load = data.result;
         results.innerHTML = renderLoadResult(data.result, data.id);
       } else if (evName === "error") {
         results.innerHTML = errorCard("load test failed: " + (data && data.error ? data.error : "unknown error"));
@@ -1203,4 +1230,489 @@ function fmtNum(n) {
   if (n >= 100) return n.toFixed(0);
   if (n >= 1) return n.toFixed(1);
   return n.toFixed(2);
+}
+
+// ---------------------------------------------------------------------------
+// M6: signing debugger, lifecycle check, protocol fuzz, webhooks,
+// snapshots, reports.
+// ---------------------------------------------------------------------------
+
+// --- Signing debugger ------------------------------------------------------
+
+const signdebugForm = document.getElementById("signdebug-form");
+if (signdebugForm) {
+  signdebugForm.addEventListener("submit", runSigndebug);
+}
+
+function parseHeaderLines(text) {
+  const out = {};
+  for (const line of String(text || "").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const i = t.indexOf(":");
+    if (i < 0) continue;
+    out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+  }
+  return out;
+}
+
+async function runSigndebug(event) {
+  event.preventDefault();
+  const btn = document.getElementById("sd-verify-btn");
+  const results = document.getElementById("signdebug-results");
+  btn.disabled = true;
+  btn.textContent = "Verifying…";
+  results.innerHTML = '<p class="meta">Reconstructing signature base…</p>';
+  const payload = {
+    request: {
+      method: document.getElementById("sd-method").value.trim() || "POST",
+      url: document.getElementById("sd-url").value.trim(),
+      headers: parseHeaderLines(document.getElementById("sd-headers").value),
+      body: document.getElementById("sd-body").value,
+    },
+    key_pem: document.getElementById("sd-key").value,
+    expected_base: document.getElementById("sd-expected").value,
+  };
+  try {
+    const rep = await fetchJSON("/api/signdebug/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    results.innerHTML = renderSigndebug(rep);
+  } catch (err) {
+    results.innerHTML = errorCard("verification failed: " + err.message);
+  } finally {
+    // Never keep key material in the page longer than the single check.
+    document.getElementById("sd-key").value = "";
+    btn.disabled = false;
+    btn.textContent = "Verify signature";
+  }
+}
+
+function renderSigndebug(rep) {
+  const valid = rep.verdict === "valid";
+  const cls = valid ? "passed" : "failed";
+  const checks = (rep.checks || []).map((c) => `
+    <div class="check">
+      <span class="badge ${c.ok ? "pass" : "fail"}">${c.ok ? "OK" : "MISMATCH"}</span>
+      <span class="check-name">${esc(c.name)}</span>
+      <details><summary>detail</summary>
+        <p>${esc(c.detail || "")}</p>
+        ${c.expected ? `<p>expected: <code>${esc(c.expected)}</code></p>` : ""}
+        ${c.actual ? `<p>actual: <code>${esc(c.actual)}</code></p>` : ""}
+      </details>
+    </div>`).join("");
+  const components = (rep.components || []).map((c) => `
+    <div class="check"><span class="check-name"><code>${esc(c.name)}</code></span>
+      <span class="meta">${esc(c.value || "")}</span></div>`).join("");
+  const steps = (rep.steps || []).map((s) => `<li>${esc(s)}</li>`).join("");
+  return `
+    <div class="card summary ${cls}">
+      <h3>Signature ${valid ? "VALID" : "INVALID"}</h3>
+      <p>${esc(rep.summary || "")}</p>
+      <p class="meta">label <code>${esc(rep.label || "")}</code> ·
+         algorithm <code>${esc(rep.algorithm || "")}</code>
+         ${rep.key_id ? ` · key id <code>${esc(rep.key_id)}</code>` : ""}</p>
+    </div>
+    <div class="card"><h3>Checks</h3>${checks || '<p class="meta">No checks.</p>'}</div>
+    <div class="card"><h3>Covered components</h3>${components || '<p class="meta">None.</p>'}</div>
+    <div class="card"><h3>Reconstructed signature base</h3>
+      <pre class="prewrap">${esc(rep.signature_base || "")}</pre></div>
+    <div class="card"><h3>Steps</h3><ol class="meta">${steps}</ol></div>`;
+}
+
+// --- Lifecycle check -------------------------------------------------------
+
+const lifecycleBtn = document.getElementById("lifecycle-run-btn");
+if (lifecycleBtn) {
+  lifecycleBtn.addEventListener("click", runLifecycleCheck);
+}
+
+async function runLifecycleCheck() {
+  const target = document.getElementById("scenario-target").value.trim();
+  const bearer = document.getElementById("scenario-bearer").value;
+  const results = document.getElementById("lifecycle-results");
+  if (!target) {
+    results.innerHTML = errorCard("Enter a target MCP endpoint URL first (Scenarios screen, target field).");
+    return;
+  }
+  lifecycleBtn.disabled = true;
+  lifecycleBtn.textContent = "Running…";
+  results.innerHTML = '<p class="meta">Walking the media-buy lifecycle…</p>';
+  try {
+    const rep = await fetchJSON("/api/lifecycle/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_url: target, bearer_token: bearer }),
+    });
+    lastReports.lifecycle = rep;
+    const passed = (rep.checks || []).filter((c) => c.status === "pass").length;
+    const total = (rep.checks || []).length;
+    const cls = passed === total && total > 0 ? "passed" : "failed";
+    const rows = (rep.checks || []).map((c) => `
+      <div class="check">
+        <span class="badge ${esc(c.status)}">${esc(c.status).toUpperCase()}</span>
+        <span class="check-name">${esc(c.name)}</span>
+        <span class="check-dur">${Number(c.duration_ms).toFixed(0)} ms</span>
+        <details><summary>detail</summary><p>${esc(c.detail)}</p></details>
+      </div>`).join("");
+    results.innerHTML = `
+      <div class="card summary ${cls}"><h3>Lifecycle report</h3>
+        <p>Target: <code>${esc(rep.target_url)}</code></p>
+        <p><strong>${passed}</strong> passed of ${total} checks.
+           ${rep.media_buy_id ? `Media buy: <code>${esc(rep.media_buy_id)}</code>` : ""}</p>
+      </div>
+      <div class="card"><h3>Checks</h3>${rows}</div>`;
+  } catch (err) {
+    results.innerHTML = errorCard("lifecycle check failed: " + err.message);
+  } finally {
+    lifecycleBtn.disabled = false;
+    lifecycleBtn.textContent = "Run lifecycle check";
+  }
+}
+
+// --- Protocol fuzz ---------------------------------------------------------
+
+const fuzzForm = document.getElementById("fuzz-form");
+if (fuzzForm) {
+  fuzzForm.addEventListener("submit", runFuzz);
+}
+
+async function runFuzz(event) {
+  event.preventDefault();
+  const btn = document.getElementById("fuzz-run-btn");
+  const results = document.getElementById("fuzz-results");
+  btn.disabled = true;
+  btn.textContent = "Fuzzing…";
+  results.innerHTML = '<p class="meta">Sending malformed payloads…</p>';
+  const payload = {
+    target_url: document.getElementById("fuzz-target").value.trim(),
+    iterations: Number(document.getElementById("fuzz-iterations").value) || 200,
+    seed: Number(document.getElementById("fuzz-seed").value) || 0,
+    allow_remote: document.getElementById("fuzz-allow-remote").checked,
+  };
+  try {
+    const rep = await fetchJSON("/api/fuzz/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    lastReports.fuzz = rep;
+    const findings = rep.findings || [];
+    const cls = findings.length === 0 ? "passed" : "failed";
+    const rows = findings.map((f) => `
+      <div class="check">
+        <span class="badge fail">${esc(f.kind).toUpperCase()}</span>
+        <span class="check-name">iteration ${esc(String(f.iteration))}</span>
+        <details><summary>detail</summary>
+          <p>${esc(f.detail || "")}</p>
+          <p class="meta">payload</p><pre class="prewrap">${esc(f.payload || "")}</pre>
+        </details>
+      </div>`).join("");
+    results.innerHTML = `
+      <div class="card summary ${cls}"><h3>Fuzz report</h3>
+        <p>Target: <code>${esc(rep.target_url)}</code> — ${rep.iterations} iterations, seed <code>${rep.seed}</code></p>
+        <p><strong>${findings.length}</strong> finding(s).</p>
+      </div>
+      ${findings.length ? `<div class="card"><h3>Findings</h3>${rows}</div>` : ""}`;
+  } catch (err) {
+    results.innerHTML = errorCard("fuzz run failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run fuzzer";
+  }
+}
+
+// --- Webhooks --------------------------------------------------------------
+
+let webhookPollTimer = null;
+
+const webhookForm = document.getElementById("webhook-form");
+if (webhookForm) {
+  webhookForm.addEventListener("submit", startWebhookListener);
+}
+const webhookStopBtn = document.getElementById("webhook-stop-btn");
+if (webhookStopBtn) {
+  webhookStopBtn.addEventListener("click", async () => {
+    await fetchJSON("/api/webhooks/stop", { method: "POST" }).catch(() => ({}));
+    stopWebhookPoll();
+    document.getElementById("webhook-url").textContent = "";
+    document.getElementById("webhook-deliveries").innerHTML = "";
+  });
+}
+const webhookClearBtn = document.getElementById("webhook-clear-btn");
+if (webhookClearBtn) {
+  webhookClearBtn.addEventListener("click", async () => {
+    await fetchJSON("/api/webhooks/clear", { method: "POST" }).catch(() => ({}));
+    refreshWebhookDeliveries().catch(() => {});
+  });
+}
+
+async function startWebhookListener(event) {
+  event.preventDefault();
+  const port = Number(document.getElementById("webhook-port").value) || 0;
+  const urlEl = document.getElementById("webhook-url");
+  try {
+    const res = await fetchJSON("/api/webhooks/listen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port: port }),
+    });
+    urlEl.innerHTML = `Listening — point the seller's webhooks at <code>${esc(res.url)}</code>`;
+    startWebhookPoll();
+    refreshWebhookDeliveries().catch(() => {});
+  } catch (err) {
+    urlEl.textContent = "Could not start listener: " + err.message;
+  }
+}
+
+function startWebhookPoll() {
+  stopWebhookPoll();
+  webhookPollTimer = setInterval(() => {
+    if (document.getElementById("screen-webhooks").classList.contains("hidden")) return;
+    refreshWebhookDeliveries().catch(() => {});
+  }, 2000);
+}
+
+function stopWebhookPoll() {
+  if (webhookPollTimer) {
+    clearInterval(webhookPollTimer);
+    webhookPollTimer = null;
+  }
+}
+
+async function refreshWebhooks() {
+  await refreshWebhookDeliveries();
+  startWebhookPoll();
+}
+
+async function refreshWebhookDeliveries() {
+  const box = document.getElementById("webhook-deliveries");
+  const res = await fetchJSON("/api/webhooks/deliveries", {});
+  if (res.url) {
+    document.getElementById("webhook-url").innerHTML =
+      `Listening — point the seller's webhooks at <code>${esc(res.url)}</code>`;
+    startWebhookPoll();
+  }
+  const deliveries = res.deliveries || [];
+  if (!deliveries.length) {
+    box.innerHTML = '<div class="card"><p class="meta">No deliveries captured yet.</p></div>';
+    return;
+  }
+  box.innerHTML = `<div class="card"><h3>Deliveries (${deliveries.length})</h3>` + deliveries.map((d) => {
+    const headers = Object.entries(d.headers || {}).map(([k, v]) =>
+      `<div class="check"><span class="check-name"><code>${esc(k)}</code></span><span class="meta">${esc(v)}</span></div>`).join("");
+    const body = d.body ? `<pre class="prewrap">${esc(typeof d.body === "string" ? d.body : JSON.stringify(d.body, null, 2))}</pre>`
+      : (d.raw_body ? `<pre class="prewrap">${esc(d.raw_body)}</pre>` : '<p class="meta">empty body</p>');
+    return `<div class="check">
+        <span class="badge pass">#${d.id}</span>
+        <span class="check-name"><code>${esc(d.method)} ${esc(d.path)}</code></span>
+        <span class="check-dur">${esc(fmtTime(d.received_at))}</span>
+        <details><summary>headers &amp; body</summary>${headers}${body}
+        ${d.truncated ? '<p class="meta">body truncated</p>' : ""}</details>
+      </div>`;
+  }).join("") + "</div>";
+}
+
+// --- Snapshots -------------------------------------------------------------
+
+const snapshotSaveForm = document.getElementById("snapshot-save-form");
+if (snapshotSaveForm) {
+  snapshotSaveForm.addEventListener("submit", saveSnapshot);
+}
+const snapshotDiffForm = document.getElementById("snapshot-diff-form");
+if (snapshotDiffForm) {
+  snapshotDiffForm.addEventListener("submit", diffSnapshots);
+}
+
+async function refreshSnapshots() {
+  const box = document.getElementById("snapshot-list");
+  let snaps = [];
+  try {
+    const res = await fetchJSON("/api/snapshots", {});
+    snaps = res.snapshots || [];
+  } catch (err) {
+    box.innerHTML = errorCard("could not load snapshots: " + err.message);
+    return;
+  }
+  if (!snaps.length) {
+    box.innerHTML = '<p class="meta">No snapshots saved yet.</p>';
+  } else {
+    box.innerHTML = snaps.map((s) => `
+      <div class="check">
+        <span class="badge pass">${esc(s.kind)}</span>
+        <span class="check-name"><code>${esc(s.name)}</code></span>
+        <span class="check-dur">${esc(fmtTime(s.saved_at))}</span>
+        <span class="meta">${esc(s.summary || "")}</span>
+        <button type="button" data-del="${esc(s.name)}" class="snap-del-btn">delete</button>
+      </div>`).join("");
+    box.querySelectorAll(".snap-del-btn").forEach((b) => {
+      b.addEventListener("click", async () => {
+        await fetchJSON("/api/snapshots/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: b.dataset.del }),
+        }).catch((e) => alert("delete failed: " + e.message));
+        refreshSnapshots().catch(() => {});
+      });
+    });
+  }
+  const opts = snaps.map((s) => `<option value="${esc(s.name)}">${esc(s.name)} (${esc(s.kind)})</option>`).join("");
+  document.getElementById("snap-before").innerHTML = opts;
+  document.getElementById("snap-after").innerHTML = opts;
+}
+
+async function saveSnapshot(event) {
+  event.preventDefault();
+  const kind = document.getElementById("snap-kind").value;
+  const name = document.getElementById("snap-name").value.trim();
+  let reportText = document.getElementById("snap-report").value.trim();
+  if (!reportText && lastReports[kind]) {
+    reportText = JSON.stringify(lastReports[kind]);
+  }
+  if (!name) {
+    alert("Give the snapshot a name.");
+    return;
+  }
+  let report;
+  try {
+    report = JSON.parse(reportText);
+  } catch (err) {
+    alert("Report is not valid JSON: " + err.message);
+    return;
+  }
+  try {
+    await fetchJSON("/api/snapshots/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: kind, name: name, report: report }),
+    });
+    document.getElementById("snap-name").value = "";
+    document.getElementById("snap-report").value = "";
+    refreshSnapshots().catch(() => {});
+  } catch (err) {
+    alert("save failed: " + err.message);
+  }
+}
+
+async function diffSnapshots(event) {
+  event.preventDefault();
+  const box = document.getElementById("snapshot-diff-results");
+  const before = document.getElementById("snap-before").value;
+  const after = document.getElementById("snap-after").value;
+  if (!before || !after) {
+    box.innerHTML = errorCard("Pick two snapshots to diff.");
+    return;
+  }
+  box.innerHTML = '<p class="meta">Diffing…</p>';
+  try {
+    const r = await fetch(`/api/snapshots/diff?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "diff failed");
+    const list = (arr) => (arr && arr.length ? arr.map((x) => `<li><code>${esc(x)}</code></li>`).join("") : "<li>none</li>");
+    box.innerHTML = `
+      <div class="card summary ${d.changed || (d.new && d.new.length) || (d.removed && d.removed.length) ? "failed" : "passed"}">
+        <h3>Diff: <code>${esc(d.before)}</code> → <code>${esc(d.after)}</code></h3>
+        <p><strong>${d.changed}</strong> changed check(s)</p>
+      </div>
+      <div class="card cols">
+        <div class="panel"><h4>Pass → fail</h4><ul>${list(d.pass_to_fail)}</ul></div>
+        <div class="panel"><h4>Fail → pass</h4><ul>${list(d.fail_to_pass)}</ul></div>
+        <div class="panel"><h4>New</h4><ul>${list(d.new)}</ul></div>
+        <div class="panel"><h4>Removed</h4><ul>${list(d.removed)}</ul></div>
+      </div>`;
+  } catch (err) {
+    box.innerHTML = errorCard("diff failed: " + err.message);
+  }
+}
+
+// --- Reports ---------------------------------------------------------------
+
+const reportKinds = ["conformance", "scenarios", "load", "lifecycle", "fuzz"];
+
+function refreshReports() {
+  const box = document.getElementById("report-inputs");
+  box.innerHTML = reportKinds.map((k) => `
+    <div class="panel">
+      <h4>${k}</h4>
+      <label class="checkline"><input type="checkbox" id="rep-use-${k}" ${lastReports[k] ? "checked" : ""}>
+        use last ${k} run ${lastReports[k] ? "(available)" : "(none yet)"}</label>
+      <label>Paste report JSON (overrides)
+        <textarea id="rep-json-${k}" rows="3" placeholder='{"checks": […]}'></textarea>
+      </label>
+    </div>`).join("");
+  fetchJSON("/api/snapshots", {}).then((res) => {
+    const snaps = res.snapshots || [];
+    const opts = '<option value="">—</option>' + snaps.map((s) =>
+      `<option value="${esc(s.name)}">${esc(s.name)} (${esc(s.kind)})</option>`).join("");
+    document.getElementById("report-diff-before").innerHTML = opts;
+    document.getElementById("report-diff-after").innerHTML = opts;
+  }).catch(() => {});
+}
+
+const reportHtmlBtn = document.getElementById("report-html-btn");
+if (reportHtmlBtn) reportHtmlBtn.addEventListener("click", () => buildReport("html"));
+const reportPdfBtn = document.getElementById("report-pdf-btn");
+if (reportPdfBtn) reportPdfBtn.addEventListener("click", () => buildReport("pdf"));
+
+function collectReportInputs() {
+  const body = {
+    title: document.getElementById("report-title").value.trim(),
+    diff_before: document.getElementById("report-diff-before").value,
+    diff_after: document.getElementById("report-diff-after").value,
+  };
+  for (const k of reportKinds) {
+    const pasted = document.getElementById("rep-json-" + k).value.trim();
+    if (pasted) {
+      try {
+        body[k] = JSON.parse(pasted);
+      } catch (err) {
+        throw new Error(k + " JSON is invalid: " + err.message);
+      }
+    } else if (document.getElementById("rep-use-" + k).checked && lastReports[k]) {
+      body[k] = lastReports[k];
+    }
+  }
+  return body;
+}
+
+async function buildReport(format) {
+  const status = document.getElementById("report-status");
+  status.innerHTML = '<p class="meta">Building evidence pack…</p>';
+  let body;
+  try {
+    body = collectReportInputs();
+  } catch (err) {
+    status.innerHTML = errorCard(err.message);
+    return;
+  }
+  body.format = format;
+  try {
+    const resp = await fetch("/api/reports/build", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      let msg = "build failed";
+      try {
+        const errBody = await resp.json();
+        if (errBody && errBody.error) msg = errBody.error;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "adcp-test-evidence." + format;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    status.innerHTML = '<p class="meta">Download started.</p>';
+  } catch (err) {
+    status.innerHTML = errorCard("report build failed: " + err.message);
+  }
 }

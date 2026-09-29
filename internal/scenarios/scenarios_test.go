@@ -83,8 +83,8 @@ func TestBuiltinPacksParse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuiltinPacks: %v", err)
 	}
-	if len(metas) != 4 {
-		t.Fatalf("got %d built-in packs, want 4", len(metas))
+	if len(metas) != 5 {
+		t.Fatalf("got %d built-in packs, want 5", len(metas))
 	}
 	for _, m := range metas {
 		if m.ScenarioCount == 0 {

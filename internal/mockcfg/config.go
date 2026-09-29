@@ -29,6 +29,7 @@
 //	respond: { file: products.json }      # JSON body read from a file
 //	respond: { sequence: [a.json, b.json] }   # nth call -> nth response
 //	respond: { template: media-buy.json }    # {{args.*}} placeholders
+//	respond: { error: { code: -32001, message: rejected } }  # JSON-RPC error
 package mockcfg
 
 import (
@@ -76,6 +77,10 @@ type Route struct {
 	Latency      *Latency `yaml:"latency,omitempty" json:"latency,omitempty"`
 	Faults       *Faults  `yaml:"faults,omitempty" json:"faults,omitempty"`
 	StateMachine string   `yaml:"state_machine,omitempty" json:"state_machine,omitempty"`
+	// InputSchema is the JSON schema advertised for the route's tool in
+	// tools/list (e.g. {"type":"object","required":["brief"]}). When
+	// unset, the engine advertises a bare {"type":"object"} schema.
+	InputSchema any `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
 }
 
 // Match selects requests: exact tool name plus argument patterns. String
@@ -95,8 +100,19 @@ type Respond struct {
 	File     string
 	Sequence []SequenceItem
 	Template string
+	Error    *ErrorResponse
 
 	inlineSet bool // the explicit "inline:" key was used
+}
+
+// ErrorResponse is a structured JSON-RPC error the mock returns instead
+// of a result payload. It lets a mock seller simulate rejections —
+// unsigned mutating calls, invalid arguments, illegal state moves — the
+// way a real seller would.
+type ErrorResponse struct {
+	Code    int    `yaml:"code" json:"code"`
+	Message string `yaml:"message" json:"message"`
+	Data    any    `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 // SequenceItem is one step of a sequenced response: a file path (bare
@@ -213,7 +229,7 @@ func (c *Config) Services() []MockService {
 // Respond (un)marshaling
 // ---------------------------------------------------------------------------
 
-var respondModeKeys = []string{"file", "sequence", "template", "inline"}
+var respondModeKeys = []string{"file", "sequence", "template", "inline", "error"}
 
 // UnmarshalYAML implements yaml.Unmarshaler.
 func (r *Respond) UnmarshalYAML(value *yaml.Node) error {
@@ -262,7 +278,7 @@ func respondFromMap(m map[string]any) (Respond, error) {
 		}
 	}
 	if len(seen) > 1 {
-		return Respond{}, fmt.Errorf("respond: only one of file/sequence/template/inline allowed, got %s", strings.Join(seen, ", "))
+		return Respond{}, fmt.Errorf("respond: only one of file/sequence/template/inline/error allowed, got %s", strings.Join(seen, ", "))
 	}
 	if len(seen) == 0 {
 		// A bare mapping is an inline JSON body.
@@ -300,12 +316,57 @@ func respondFromMap(m map[string]any) (Respond, error) {
 			items = append(items, it)
 		}
 		return Respond{Sequence: items}, nil
+	case "error":
+		em, ok := m["error"].(map[string]any)
+		if !ok {
+			return Respond{}, fmt.Errorf("respond: error must be a mapping with code and message")
+		}
+		e := &ErrorResponse{}
+		if c, ok := em["code"]; ok {
+			f, ok := toFloatAny(c)
+			if !ok {
+				return Respond{}, fmt.Errorf("respond: error.code must be a number")
+			}
+			e.Code = int(f)
+		} else {
+			return Respond{}, fmt.Errorf("respond: error.code is required")
+		}
+		msg, ok := em["message"].(string)
+		if !ok || strings.TrimSpace(msg) == "" {
+			return Respond{}, fmt.Errorf("respond: error.message must be a non-empty string")
+		}
+		e.Message = msg
+		if d, ok := em["data"]; ok {
+			e.Data = d
+		}
+		return Respond{Error: e}, nil
 	}
 	return Respond{}, fmt.Errorf("respond: unreachable")
 }
 
+// toFloatAny converts YAML/JSON numbers to float64.
+func toFloatAny(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	}
+	return 0, false
+}
+
 func (r Respond) toMap() map[string]any {
 	switch {
+	case r.Error != nil:
+		em := map[string]any{"code": r.Error.Code, "message": r.Error.Message}
+		if r.Error.Data != nil {
+			em["data"] = r.Error.Data
+		}
+		return map[string]any{"error": em}
 	case r.File != "":
 		return map[string]any{"file": r.File}
 	case r.Template != "":
@@ -330,7 +391,7 @@ func (r Respond) toMap() map[string]any {
 
 // HasResponse reports whether any response mode is configured.
 func (r Respond) HasResponse() bool {
-	return r.File != "" || r.Template != "" || len(r.Sequence) > 0 || r.inlineSet || r.Inline != nil
+	return r.File != "" || r.Template != "" || len(r.Sequence) > 0 || r.inlineSet || r.Inline != nil || r.Error != nil
 }
 
 func seqItemFromAny(v any) (SequenceItem, error) {
@@ -511,7 +572,7 @@ func validateRoute(p string, rt Route, add func(string, ...any)) {
 		add("%s: match.tool is required", p)
 	}
 	if !rt.Respond.HasResponse() {
-		add("%s: respond needs one of file/sequence/template/inline (or a bare inline JSON mapping)", p)
+		add("%s: respond needs one of file/sequence/template/inline/error (or a bare inline JSON mapping)", p)
 	}
 	if rt.Respond.Template != "" {
 		if err := ValidateTemplateSyntax(rt.Respond.Template); err != nil {
@@ -545,6 +606,11 @@ func validateRoute(p string, rt Route, add func(string, ...any)) {
 	}
 	if rt.StateMachine != "" && rt.StateMachine != StateMachineMediaBuyLifecycle {
 		add("%s: unknown state_machine %q", p, rt.StateMachine)
+	}
+	if rt.InputSchema != nil {
+		if _, ok := rt.InputSchema.(map[string]any); !ok {
+			add("%s: input_schema must be a mapping (a JSON schema object)", p)
+		}
 	}
 }
 

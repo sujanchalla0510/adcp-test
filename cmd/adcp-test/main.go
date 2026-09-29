@@ -25,6 +25,37 @@
 //	    Run a load test headless. Prints the JSON report to stdout:
 //	    exit 0 when every threshold passes, 1 otherwise. Non-localhost
 //	    targets are refused unless --allow-remote is passed.
+//
+//	adcp-test signdebug --request req.json --key key.pem [--expected-base base.txt]
+//	    Verify an RFC 9421 HTTP signature offline. req.json holds
+//	    {method, url, headers, body}; the key file holds a PEM public or
+//	    private key. Prints the debugger report as JSON: exit 0 when the
+//	    signature is valid, 1 otherwise. The key never leaves memory.
+//
+//	adcp-test lifecycle --target <seller-mcp-url>
+//	    Walk one media buy through create -> activate -> pause -> resume ->
+//	    cancel, then verify the illegal cancelled -> active transition is
+//	    rejected with a structured error. Prints the JSON report: exit 0
+//	    when every check passes, 1 otherwise.
+//
+//	adcp-test fuzz --target <url> [--iterations N] [--seed S]
+//	    Throw malformed JSON-RPC payloads at the target and report crashes,
+//	    hangs, and non-JSON responses. Localhost only unless --allow-remote.
+//	    Exit 0 when the target survived everything, 1 on any finding.
+//
+//	adcp-test webhook-listen [--port P] [--out deliveries.json]
+//	    Capture seller webhooks on localhost. Ctrl-C stops the listener and
+//	    writes the captured timeline as JSON.
+//
+//	adcp-test snapshot save --kind <kind> --name <name> --file report.json
+//	adcp-test snapshot list | diff --before a --after b | delete --name a
+//	    Save, list, diff, and delete named JSON report snapshots under
+//	    ./snapshots/.
+//
+//	adcp-test report --conformance c.json --scenarios s.json --load l.json \
+//	    --out evidence.html [--pdf evidence.pdf]
+//	    Build a self-contained HTML evidence pack (plus an optional PDF
+//	    export) from run reports.
 package main
 
 import (
@@ -68,6 +99,18 @@ func main() {
 			os.Exit(runScenario(os.Args[2:], os.Stdout))
 		case "load":
 			os.Exit(runLoad(os.Args[2:], os.Stdout))
+		case "signdebug":
+			os.Exit(runSigndebug(os.Args[2:], os.Stdout))
+		case "lifecycle":
+			os.Exit(runLifecycle(os.Args[2:], os.Stdout))
+		case "fuzz":
+			os.Exit(runFuzz(os.Args[2:], os.Stdout))
+		case "webhook-listen":
+			os.Exit(runWebhookListen(os.Args[2:], os.Stdout))
+		case "snapshot":
+			os.Exit(runSnapshot(os.Args[2:], os.Stdout))
+		case "report":
+			os.Exit(runReport(os.Args[2:], os.Stdout))
 		}
 	}
 
@@ -294,6 +337,9 @@ func runScenario(args []string, stdout io.Writer) int {
 	target := fs.String("target", "", "seller MCP endpoint URL")
 	bearer := fs.String("bearer-token", "", "bearer token for the target (optional)")
 	timeout := fs.Duration("timeout", 0, "per-step request timeout (0 = default 30s)")
+	chaos := fs.Bool("chaos", false, "inject random faults/latency spikes into the run")
+	chaosSeed := fs.Int64("chaos-seed", 0, "chaos RNG seed (0 = random; recorded in the report)")
+	allowRemote := fs.Bool("allow-remote", false, "allow a chaos run against a non-localhost target")
 	list := fs.Bool("list", false, "list built-in packs and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -320,9 +366,15 @@ func runScenario(args []string, stdout io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), maxScenarioCI)
 	defer cancel()
+	var chaosOpts *scenarios.ChaosOptions
+	if *chaos {
+		chaosOpts = &scenarios.ChaosOptions{Enabled: true, Seed: *chaosSeed}
+	}
 	rep, err := scenarios.Run(ctx, pack, *target, scenarios.Options{
 		Timeout:     *timeout,
 		BearerToken: *bearer,
+		Chaos:       chaosOpts,
+		AllowRemote: *allowRemote,
 	})
 	if err != nil {
 		writeCIError(stdout, err.Error())

@@ -173,6 +173,7 @@ type StepResult struct {
 	LatencyMs  float64           `json:"latency_ms"`
 	Assertions []AssertionResult `json:"assertions"`
 	Error      string            `json:"error,omitempty"` // transport/RPC failure
+	Chaos      *ChaosMark        `json:"chaos,omitempty"` // set when chaos injection touched this step
 }
 
 // ScenarioResult is the outcome of one scenario.
@@ -199,6 +200,7 @@ type Report struct {
 	StartedAt time.Time        `json:"started_at"`
 	Summary   Summary          `json:"summary"`
 	Scenarios []ScenarioResult `json:"scenarios"`
+	Chaos     *ChaosSummary    `json:"chaos,omitempty"`
 }
 
 // AllPassed reports whether every scenario passed.
@@ -239,6 +241,11 @@ type Options struct {
 	Store *session.Store
 	// OnEvent receives live progress; may be nil.
 	OnEvent func(Event)
+	// Chaos layers fault/latency injection over the run; nil disables it.
+	Chaos *ChaosOptions
+	// AllowRemote bypasses the chaos localhost guard. Without it, a chaos
+	// run against a non-localhost target is refused.
+	AllowRemote bool
 }
 
 // Run executes every scenario in pack against target, sequentially.
@@ -249,17 +256,21 @@ func Run(ctx context.Context, pack *Pack, target string, opts Options) (*Report,
 	if strings.TrimSpace(target) == "" {
 		return nil, fmt.Errorf("scenarios: target URL is required")
 	}
+	if opts.Chaos != nil && opts.Chaos.Enabled && !opts.AllowRemote && !isLocalhost(target) {
+		return nil, fmt.Errorf("scenarios: refusing non-localhost target %q for chaos run (pass AllowRemote to override)", target)
+	}
 	store := opts.Store
 	if store == nil {
 		store = session.NewStore()
 	}
+	chaos := newChaosInjector(opts.Chaos)
 	rep := &Report{
 		Pack:      pack.Name,
 		TargetURL: target,
 		StartedAt: time.Now().UTC(),
 	}
 	for i := range pack.Scenarios {
-		sr := runScenario(ctx, &pack.Scenarios[i], target, store, opts, func(e Event) {
+		sr := runScenario(ctx, &pack.Scenarios[i], target, store, opts, chaos, func(e Event) {
 			e.Pack = pack.Name
 			if opts.OnEvent != nil {
 				opts.OnEvent(e)
@@ -273,11 +284,24 @@ func Run(ctx context.Context, pack *Pack, target string, opts Options) (*Report,
 		}
 		rep.Summary.Total++
 	}
+	if chaos != nil {
+		survived, total := 0, 0
+		for i := range rep.Scenarios {
+			for j := range rep.Scenarios[i].Steps {
+				st := &rep.Scenarios[i].Steps[j]
+				total++
+				if st.Chaos != nil && st.Passed {
+					survived++
+				}
+			}
+		}
+		rep.Chaos = chaos.summary(survived, total)
+	}
 	return rep, nil
 }
 
 // runScenario executes one scenario: setup hooks, steps, teardown hooks.
-func runScenario(ctx context.Context, sc *Scenario, target string, store *session.Store, opts Options, emit func(Event)) *ScenarioResult {
+func runScenario(ctx context.Context, sc *Scenario, target string, store *session.Store, opts Options, chaos *chaosInjector, emit func(Event)) *ScenarioResult {
 	sess := store.New(target)
 	vars := map[string]any{}
 	sr := &ScenarioResult{Name: sc.Name, SessionID: sess.ID, Passed: true}
@@ -288,7 +312,7 @@ func runScenario(ctx context.Context, sc *Scenario, target string, store *sessio
 
 	// Setup hooks: failures abort the scenario.
 	for _, c := range sc.Setup {
-		if err := execHook(ctx, client, sess, c, vars); err != nil {
+		if err := execHook(ctx, client, sess, c, vars, chaos); err != nil {
 			sr.SetupError = err.Error()
 			sr.Passed = false
 			finishScenario(sr, emit)
@@ -299,7 +323,7 @@ func runScenario(ctx context.Context, sc *Scenario, target string, store *sessio
 	for i := range sc.Steps {
 		st := &sc.Steps[i]
 		emit(Event{Type: EventStepStarted, Scenario: sc.Name, Step: stepName(st, i), StepIndex: i})
-		res := execStep(ctx, client, sess, st, i, vars, opts)
+		res := execStep(ctx, client, sess, st, i, vars, opts, chaos)
 		sr.Steps = append(sr.Steps, *res)
 		if !res.Passed {
 			sr.Passed = false
@@ -315,7 +339,7 @@ func runScenario(ctx context.Context, sc *Scenario, target string, store *sessio
 		if hasUnresolvedVars(c.Arguments, vars) {
 			continue
 		}
-		if err := execHook(ctx, client, sess, c, vars); err != nil {
+		if err := execHook(ctx, client, sess, c, vars, chaos); err != nil {
 			sr.TeardownError = err.Error()
 			break
 		}
@@ -368,9 +392,16 @@ func stepName(st *Step, i int) string {
 }
 
 // execHook runs a setup/teardown call without assertions.
-func execHook(ctx context.Context, client *mcpclient.Client, sess *session.Session, c Call, vars map[string]any) error {
+func execHook(ctx context.Context, client *mcpclient.Client, sess *session.Session, c Call, vars map[string]any, chaos *chaosInjector) error {
 	args := renderArgs(c.Arguments, vars)
 	out, in := recordExchange(sess, c.Tool, args)
+	if chaos != nil {
+		if mark := chaos.beforeCall(ctx); mark != nil && mark.Injected == "dropped-call" {
+			sess.Append(session.NewErrorStep("tools/call", c.Tool, in.RequestID, mark.Detail, 0))
+			_ = out
+			return fmt.Errorf("hook %s: %s", c.Tool, mark.Detail)
+		}
+	}
 	start := time.Now()
 	res, err := client.CallTool(ctx, c.Tool, args)
 	dur := time.Since(start)
@@ -385,10 +416,24 @@ func execHook(ctx context.Context, client *mcpclient.Client, sess *session.Sessi
 }
 
 // execStep runs one asserted step and evaluates its assertions.
-func execStep(ctx context.Context, client *mcpclient.Client, sess *session.Session, st *Step, idx int, vars map[string]any, opts Options) *StepResult {
+func execStep(ctx context.Context, client *mcpclient.Client, sess *session.Session, st *Step, idx int, vars map[string]any, opts Options, chaos *chaosInjector) *StepResult {
 	res := &StepResult{Name: stepName(st, idx), Tool: st.Tool, Passed: true}
 	args := renderArgs(st.Arguments, vars)
 	_, in := recordExchange(sess, st.Tool, args)
+
+	// Chaos injection happens before the call: a spike sleeps (recorded
+	// on the step), a dropped call fails the step without sending.
+	if chaos != nil {
+		if mark := chaos.beforeCall(ctx); mark != nil {
+			res.Chaos = mark
+			if mark.Injected == "dropped-call" {
+				sess.Append(session.NewErrorStep("tools/call", st.Tool, in.RequestID, mark.Detail, 0))
+				res.Error = mark.Detail
+				evalAll(res, st.Assertions, nil, markErr(mark.Detail), 0, vars)
+				return res
+			}
+		}
+	}
 
 	start := time.Now()
 	callRes, err := client.CallTool(ctx, st.Tool, args)
@@ -403,14 +448,24 @@ func execStep(ctx context.Context, client *mcpclient.Client, sess *session.Sessi
 		extractVars(vars, st.Save, callRes.Raw)
 	}
 
-	for _, a := range st.Assertions {
-		ar := evalAssertion(a, callRes, err, res.LatencyMs, vars)
+	evalAll(res, st.Assertions, callRes, err, res.LatencyMs, vars)
+	return res
+}
+
+// evalAll evaluates every assertion against a step outcome.
+func evalAll(res *StepResult, assertions []Assertion, callRes *mcpclient.CallResult, err error, latencyMs float64, vars map[string]any) {
+	for _, a := range assertions {
+		ar := evalAssertion(a, callRes, err, latencyMs, vars)
 		res.Assertions = append(res.Assertions, ar)
 		if !ar.Passed {
 			res.Passed = false
 		}
 	}
-	return res
+}
+
+// markErr builds an error for a chaos-dropped call.
+func markErr(detail string) error {
+	return fmt.Errorf("%s", detail)
 }
 
 // recordExchange appends the out step for a call and returns it plus a

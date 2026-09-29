@@ -1,0 +1,97 @@
+# Example mock seller (synthetic)
+#
+# A config-driven mock AdCP seller agent used by the worked example in
+# examples/README.md. Everything here is synthetic: product names, ids,
+# budgets and URLs are invented for testing adcp-test itself.
+#
+# It advertises the full required AdCP tool surface, rejects the
+# deliberately-invalid conformance probes with structured JSON-RPC errors
+# (code -32001), and drives media buys through a lifecycle state machine
+# (draft -> active -> paused -> active -> cancelled).
+mocks:
+  - name: example-seller
+    listen: 127.0.0.1:8089
+    routes:
+      # Deliberately-invalid probes (unsigned / malformed / wrong types) get
+      # a structured rejection, the way a real seller must. Listed first so
+      # it matches before the generic create_media_buy route below.
+      - match: { tool: create_media_buy, args: { start_time: 12345 } }
+        respond:
+          error:
+            code: -32001
+            message: unsigned or malformed mutating call rejected
+            data: { reason: auth }
+      - match: { tool: get_adcp_capabilities }
+        respond:
+          inline:
+            adcp_version: "1.0"
+            protocols: [media-buy, creative]
+      - match: { tool: get_products }
+        respond:
+          inline:
+            products:
+              - product_id: prod-web-banner
+                name: Example Web Banner
+                formats: [display]
+                price_micros: 2500000
+              - product_id: prod-ctv-preroll
+                name: Example CTV Preroll
+                formats: [video]
+                price_micros: 15000000
+        input_schema:
+          type: object
+          required: [brief]
+          properties:
+            brief: { type: string }
+      - match: { tool: list_creative_formats }
+        respond:
+          inline:
+            formats:
+              - format: display
+                widths: [300, 728]
+                heights: [250, 90]
+              - format: video
+                durations: [15, 30]
+      - match: { tool: create_media_buy }
+        respond:
+          template: responses/create.json
+        input_schema:
+          type: object
+          required: [account, brand, start_time, end_time]
+          properties:
+            account: { type: string }
+            brand: { type: string }
+            start_time: { type: string }
+            end_time: { type: string }
+            product_id: { type: string }
+            budget_micros: { type: integer }
+      - match: { tool: update_media_buy }
+        state_machine: media-buy-lifecycle
+        respond:
+          template: responses/update.json
+      - match: { tool: get_media_buys }
+        respond:
+          inline:
+            media_buys: []
+      - match: { tool: sync_creatives }
+        respond:
+          inline:
+            status: approved
+            creative_id: cr-synthetic-1
+      - match: { tool: sync_catalogs }
+        respond:
+          inline:
+            status: synced
+      - match: { tool: list_creatives }
+        respond:
+          inline:
+            creatives:
+              - creative_id: cr-synthetic-1
+                format: display
+      - match: { tool: get_media_buy_delivery }
+        respond:
+          template: responses/delivery.json
+      - match: { tool: provide_performance_feedback }
+        respond:
+          inline:
+            status: received

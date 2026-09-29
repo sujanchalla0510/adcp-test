@@ -22,6 +22,8 @@ import (
 	"github.com/sujanchalla0510/adcp-test/internal/load"
 	"github.com/sujanchalla0510/adcp-test/internal/recorder"
 	"github.com/sujanchalla0510/adcp-test/internal/session"
+	"github.com/sujanchalla0510/adcp-test/internal/snapshots"
+	"github.com/sujanchalla0510/adcp-test/internal/webhooks"
 	adcpweb "github.com/sujanchalla0510/adcp-test/web"
 )
 
@@ -54,6 +56,14 @@ type Server struct {
 	loadMu      sync.Mutex
 	loadResults map[string]*load.Result
 	loadSeq     atomic.Int64
+
+	// Webhook listener (M6) state: at most one listener at a time.
+	webhookMu       sync.Mutex
+	webhookListener *webhooks.Listener
+	webhookURL      string
+
+	// Snapshot store (M6), rooted at ./snapshots.
+	snapshotStore *snapshots.Store
 }
 
 // New builds a Server from cfg.
@@ -64,12 +74,13 @@ func New(cfg *config.Config) *Server {
 		panic(fmt.Sprintf("adcp-test: embedded web assets missing: %v", err))
 	}
 	s := &Server{
-		cfg:         cfg,
-		sessions:    session.NewStore(),
-		cassettes:   map[string]*storedCassette{},
-		replays:     map[string]*runningReplay{},
-		mockCfg:     defaultMockConfig,
-		loadResults: map[string]*load.Result{},
+		cfg:           cfg,
+		sessions:      session.NewStore(),
+		cassettes:     map[string]*storedCassette{},
+		replays:       map[string]*runningReplay{},
+		mockCfg:       defaultMockConfig,
+		loadResults:   map[string]*load.Result{},
+		snapshotStore: snapshots.New(""),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
@@ -79,6 +90,12 @@ func New(cfg *config.Config) *Server {
 	registerMockRoutes(mux, s)
 	registerScenarioRoutes(mux, s)
 	registerLoadRoutes(mux, s)
+	registerSigndebugRoutes(mux, s)
+	registerLifecycleRoutes(mux, s)
+	registerFuzzRoutes(mux, s)
+	registerWebhookRoutes(mux, s)
+	registerSnapshotRoutes(mux, s)
+	registerReportRoutes(mux, s)
 	s.mux = mux
 	s.http = &http.Server{Handler: mux}
 	return s

@@ -27,6 +27,7 @@ var builtinPackIDs = []string{
 	"creative-rejection",
 	"cancel-pause",
 	"budget-limit",
+	"lifecycle",
 }
 
 // BuiltinPacks lists the embedded packs with their metadata.

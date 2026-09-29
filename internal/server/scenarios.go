@@ -46,6 +46,9 @@ type scenarioRunRequest struct {
 	TargetURL   string `json:"target_url"`
 	TargetURLV2 string `json:"targetUrl"` // alias
 	BearerToken string `json:"bearer_token"`
+	Chaos       bool   `json:"chaos"`
+	ChaosSeed   int64  `json:"chaos_seed"`
+	AllowRemote bool   `json:"allow_remote"`
 }
 
 // scenarioRunHandler runs a pack against the target and streams progress
@@ -83,9 +86,15 @@ func (s *Server) scenarioRunHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), maxScenarioRun)
 	defer cancel()
+	var chaos *scenarios.ChaosOptions
+	if req.Chaos {
+		chaos = &scenarios.ChaosOptions{Enabled: true, Seed: req.ChaosSeed}
+	}
 	rep, err := scenarios.Run(ctx, pack, target, scenarios.Options{
 		BearerToken: req.BearerToken,
 		Store:       s.sessions, // scenario traffic lands in the Inspect session store
+		Chaos:       chaos,
+		AllowRemote: req.AllowRemote,
 		OnEvent: func(e scenarios.Event) {
 			emit(e.Type, e)
 		},
