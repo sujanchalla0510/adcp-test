@@ -61,7 +61,7 @@ code { background: #f1f3f4; padding: 0.1rem 0.3rem; border-radius: 4px; }
 pre.payload { background: #f8f9fa; border: 1px solid #eee; border-radius: 6px; padding: 0.75rem; overflow: auto; font-size: 0.8rem; max-height: 320px; }
 @media (prefers-color-scheme: dark) { pre.payload { background: #1e1e1e; border-color: #333; } }
 
-/* Mock builder (M4) */
+/* Mock builder */
 .mockform label { display: block; margin: 0.5rem 0; font-weight: 600; }
 .mockform input, .mockform select, .routecard input, .routecard select, .routecard textarea {
   display: block; width: 100%; box-sizing: border-box; margin-top: 0.25rem;
@@ -91,7 +91,7 @@ pre.mockyaml { max-height: 480px; white-space: pre-wrap; overflow-wrap: anywhere
 .meta.ok { color: #137333; }
 #mock-record-status p { overflow-wrap: anywhere; }
 
-/* Scenarios + load (M5) */
+/* Scenarios + load */
 .packcard h3 { margin-top: 0; font-family: monospace; }
 .scncard h4 { margin: 0 0 0.5rem; }
 .steprow { display: grid; grid-template-columns: auto 1fr auto; gap: 0.25rem 0.75rem; align-items: baseline; padding: 0.5rem 0; border-top: 1px solid #eee; }
@@ -106,7 +106,7 @@ pre.mockyaml { max-height: 480px; white-space: pre-wrap; overflow-wrap: anywhere
 #load-form .checkline input { display: inline; width: auto; margin-right: 0.4rem; }
 #load-form textarea { font-family: monospace; font-size: 0.85rem; }
 
-/* M6 screens */
+/* Signing debugger, lifecycle, fuzz, webhooks, snapshots, reports */
 .badge.chaos { background: #4a2c00; color: #ffc978; border: 1px solid #a56b1e; }
 .btnrow { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
 .prewrap { white-space: pre-wrap; word-break: break-word; background: #0d1117; padding: 0.6rem; border-radius: 6px; font-size: 0.85em; max-height: 24rem; overflow: auto; }

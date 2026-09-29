@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestInspectScreenWired guards the M3 UI wiring: the Inspect nav entry
+// TestInspectScreenWired guards the Inspect UI wiring: the Inspect nav entry
 // must be an enabled screen button, the section must exist, and the
 // record/replay API surface must be referenced by the client script.
 func TestInspectScreenWired(t *testing.T) {
@@ -31,9 +31,7 @@ func TestInspectScreenWired(t *testing.T) {
 			t.Fatalf("index.html missing %q", want)
 		}
 	}
-	if strings.Contains(string(html), `title="M3 — coming soon"`) {
-		t.Fatal("index.html still marks Inspect as a coming-soon placeholder")
-	}
+
 	for _, want := range []string{
 		"/api/sessions",
 		"/api/record/start",
@@ -48,14 +46,8 @@ func TestInspectScreenWired(t *testing.T) {
 			t.Fatalf("app.js missing %q", want)
 		}
 	}
-	// M6 shipped the final milestone: no coming-soon placeholders may remain.
-	for _, want := range []string{
-		`title="M6 — coming soon"`,
-		`title="M5 — coming soon"`,
-		`title="M4 — coming soon"`,
-	} {
-		if strings.Contains(string(html), want) {
-			t.Fatalf("index.html still has coming-soon placeholder %q", want)
-		}
+	// All capabilities shipped: no coming-soon placeholders may remain.
+	if strings.Contains(string(html), "coming soon") {
+		t.Fatal("index.html still has a coming-soon placeholder")
 	}
 }

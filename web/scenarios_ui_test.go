@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestScenariosLoadScreensWired guards the M5 UI wiring: the Scenarios
+// TestScenariosLoadScreensWired guards the Scenarios/Load UI wiring: the Scenarios
 // and Load nav entries must be enabled screen buttons, the sections and
 // their controls must exist, and the client script must reference the
 // scenario/load API surface.
@@ -44,8 +44,8 @@ func TestScenariosLoadScreensWired(t *testing.T) {
 			t.Fatalf("index.html missing %q", want)
 		}
 	}
-	if strings.Contains(string(html), `title="M5 — coming soon"`) {
-		t.Fatal("index.html still marks Scenarios/Load as coming-soon placeholders")
+	if strings.Contains(string(html), "coming soon") {
+		t.Fatal("index.html still marks Scenarios/Load as a coming-soon placeholder")
 	}
 	for _, want := range []string{
 		"/api/scenarios",
