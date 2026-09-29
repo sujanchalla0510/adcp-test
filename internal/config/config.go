@@ -15,6 +15,9 @@ type Config struct {
 	// Target is the seller agent's MCP endpoint URL under test.
 	// Used with CIMode and by the conformance UI screen.
 	Target string
+	// BearerToken is sent as Authorization: Bearer on every probe.
+	// Used with CIMode.
+	BearerToken string
 }
 
 // FromFlags registers adcp-test flags on fs and returns the Config that
@@ -24,5 +27,6 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.IntVar(&c.Port, "port", DefaultPort, "localhost port to serve the UI on")
 	fs.BoolVar(&c.CIMode, "ci", false, "headless CI mode: run conformance against --target, print JSON report, exit 0 on all-pass")
 	fs.StringVar(&c.Target, "target", "", "seller agent MCP endpoint URL to test (used with --ci)")
+	fs.StringVar(&c.BearerToken, "bearer-token", "", "bearer token for the target (used with --ci)")
 	return c
 }

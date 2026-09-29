@@ -118,7 +118,7 @@ func main() {
 	flag.Parse()
 
 	if cfg.CIMode {
-		os.Exit(runConformanceCI(os.Stdout, cfg.Target))
+		os.Exit(runConformanceCI(os.Stdout, cfg.Target, cfg.BearerToken))
 	}
 
 	srv := server.New(cfg)
@@ -129,10 +129,10 @@ func main() {
 // runConformanceCI runs the conformance suite headless against target,
 // writes the JSON report to w, and returns the process exit code:
 // 0 when every check passes, 1 otherwise.
-func runConformanceCI(w io.Writer, target string) int {
+func runConformanceCI(w io.Writer, target, bearerToken string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), maxCIRun)
 	defer cancel()
-	rep, err := conformance.Run(ctx, target, conformance.Options{})
+	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: bearerToken})
 	if err != nil {
 		writeCIError(w, err.Error())
 		return 1

@@ -30,6 +30,10 @@ func startExampleSeller(t *testing.T) string {
 	if len(svcs) != 1 {
 		t.Fatalf("expected 1 example service, got %d", len(svcs))
 	}
+	// Bind an ephemeral port: rebinding the yaml's fixed 127.0.0.1:8089
+	// immediately after the previous test's server closed races TCP
+	// teardown and yields intermittent client-side EOFs.
+	svcs[0].Listen = "127.0.0.1:0"
 	srv, err := mockserver.New(svcs[0], mockserver.Options{BaseDir: "."})
 	if err != nil {
 		t.Fatalf("build example mock server: %v", err)

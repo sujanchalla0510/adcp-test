@@ -34,7 +34,7 @@ func minimalFakeSeller(t *testing.T) *httptest.Server {
 
 func TestRunConformanceCIEmptyTarget(t *testing.T) {
 	var buf bytes.Buffer
-	if code := runConformanceCI(&buf, ""); code != 1 {
+	if code := runConformanceCI(&buf, "", ""); code != 1 {
 		t.Fatalf("exit code = %d, want 1 for empty target", code)
 	}
 	var out map[string]any
@@ -49,7 +49,7 @@ func TestRunConformanceCIEmptyTarget(t *testing.T) {
 func TestRunConformanceCIFailingSeller(t *testing.T) {
 	srv := minimalFakeSeller(t) // advertises no tools: surface check fails
 	var buf bytes.Buffer
-	if code := runConformanceCI(&buf, srv.URL); code != 1 {
+	if code := runConformanceCI(&buf, srv.URL, ""); code != 1 {
 		t.Fatalf("exit code = %d, want 1 for failing seller", code)
 	}
 	var rep struct {
@@ -74,7 +74,7 @@ func TestRunConformanceCIUnreachable(t *testing.T) {
 	// Point at a port that is (almost certainly) closed; the run must still
 	// emit a JSON report and exit 1, not crash.
 	var buf bytes.Buffer
-	if code := runConformanceCI(&buf, "http://127.0.0.1:1/nope"); code != 1 {
+	if code := runConformanceCI(&buf, "http://127.0.0.1:1/nope", ""); code != 1 {
 		t.Fatalf("exit code = %d, want 1 for unreachable target", code)
 	}
 	if !strings.Contains(buf.String(), `"target_url"`) {

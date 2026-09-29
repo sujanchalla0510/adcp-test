@@ -1,0 +1,72 @@
+# Example: run the adcp-test GitHub Action against the in-repo example
+# mock seller. This workflow doubles as the action's own CI: it exercises
+# action.yml end to end on every push.
+#
+# To use the action in your own repo against your seller agent:
+#
+#   jobs:
+#     conformance:
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: sujanchalla0510/adcp-test@v0.3.0
+#           with:
+#             target: https://seller.example/mcp
+#             # bearer-token: ${{ secrets.SELLER_BEARER_TOKEN }}
+#
+# The JSON report is uploaded as the `adcp-conformance-report` artifact,
+# and the step exposes `passed` and `report` outputs.
+name: adcp-conformance-example
+
+on:
+  push:
+    paths:
+      - 'action.yml'
+      - '.github/workflows/adcp-conformance-example.yml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'examples/**'
+      - 'go.mod'
+  pull_request:
+    paths:
+      - 'action.yml'
+      - '.github/workflows/adcp-conformance-example.yml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'examples/**'
+      - 'go.mod'
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: Start the example mock seller
+        run: |
+          go build -o /tmp/adcp-test ./cmd/adcp-test
+          rm -rf /tmp/adcp-test-examples
+          cp -r examples /tmp/adcp-test-examples
+          sed -i 's/127.0.0.1:8089/127.0.0.1:18089/' /tmp/adcp-test-examples/mock-seller.yaml
+          /tmp/adcp-test mock --config /tmp/adcp-test-examples/mock-seller.yaml > /tmp/mock.log 2>&1 &
+          echo $! > /tmp/mock.pid
+          for i in $(seq 1 30); do
+            curl -sf -X POST http://127.0.0.1:18089 \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' > /dev/null && break
+            sleep 1
+          done
+
+      - name: Run the local action against the mock seller
+        uses: ./
+        with:
+          target: http://127.0.0.1:18089
+          version: checkout   # exercise this PR's code, not a release
+
+      - name: Stop the mock seller
+        if: always()
+        run: kill $(cat /tmp/mock.pid) || true

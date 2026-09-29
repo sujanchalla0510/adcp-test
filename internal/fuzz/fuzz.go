@@ -215,6 +215,11 @@ func isTimeout(err error) bool {
 
 func truncate(b []byte) string {
 	const max = 4096
+	if len(b) == 0 {
+		// An empty request body is a legitimate fuzz case; mark it
+		// explicitly so findings are always traceable to their input.
+		return "<empty>"
+	}
 	if len(b) <= max {
 		return string(b)
 	}

@@ -1,0 +1,87 @@
+name: 'AdCP conformance'
+description: 'Run the adcp-test conformance suite against a seller agent MCP endpoint'
+author: 'sujanchalla0510'
+
+inputs:
+  target:
+    description: 'Seller agent MCP endpoint URL to test (required)'
+    required: true
+  version:
+    description: >
+      adcp-test version to install (a release tag like v0.3.0, or 'latest').
+      Use 'checkout' to build from the action's own checkout instead of
+      installing a release (for this repo's CI).
+    required: false
+    default: 'latest'
+  bearer-token:
+    description: 'Bearer token for the target (optional)'
+    required: false
+    default: ''
+  fail-on:
+    description: "When to fail the step: 'fail' fails on any failed check, 'never' always passes the step (report still uploaded)"
+    required: false
+    default: 'fail'
+
+outputs:
+  passed:
+    description: "'true' when every conformance check passed"
+    value: ${{ steps.conformance.outputs.passed }}
+  report:
+    description: 'Path to the JSON conformance report'
+    value: ${{ steps.conformance.outputs.report }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.27'
+
+    - name: Install adcp-test (release)
+      if: inputs.version != 'checkout'
+      shell: bash
+      run: go install github.com/sujanchalla0510/adcp-test/cmd/adcp-test@${{ inputs.version }}
+
+    - name: Build adcp-test from checkout
+      if: inputs.version == 'checkout'
+      shell: bash
+      run: |
+        mkdir -p "${RUNNER_TEMP}/adcp-test-bin"
+        go build -o "${RUNNER_TEMP}/adcp-test-bin/adcp-test" "${GITHUB_ACTION_PATH}/cmd/adcp-test"
+        echo "${RUNNER_TEMP}/adcp-test-bin" >> "${GITHUB_PATH}"
+
+    - name: Run conformance
+      id: conformance
+      shell: bash
+      env:
+        ADCP_TARGET: ${{ inputs.target }}
+        ADCP_BEARER_TOKEN: ${{ inputs.bearer-token }}
+        ADCP_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        REPORT="${RUNNER_TEMP}/adcp-conformance.json"
+        ARGS=(--ci --target "${ADCP_TARGET}")
+        if [ -n "${ADCP_BEARER_TOKEN}" ]; then
+          ARGS+=(--bearer-token "${ADCP_BEARER_TOKEN}")
+        fi
+        set +e
+        adcp-test "${ARGS[@]}" > "${REPORT}"
+        CODE=$?
+        set -e
+        if [ "${CODE}" -eq 0 ]; then
+          echo "passed=true" >> "${GITHUB_OUTPUT}"
+        else
+          echo "passed=false" >> "${GITHUB_OUTPUT}"
+        fi
+        echo "report=${REPORT}" >> "${GITHUB_OUTPUT}"
+        echo "adcp-test exit code: ${CODE}"
+        if [ "${ADCP_FAIL_ON}" != "never" ] && [ "${CODE}" -ne 0 ]; then
+          exit "${CODE}"
+        fi
+
+    - name: Upload conformance report
+      uses: actions/upload-artifact@v4
+      with:
+        name: adcp-conformance-report
+        path: ${{ steps.conformance.outputs.report }}
+        if-no-files-found: error
