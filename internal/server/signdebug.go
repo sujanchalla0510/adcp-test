@@ -23,6 +23,10 @@ type signdebugVerifyRequest struct {
 	Request      signdebug.Request `json:"request"`
 	KeyPEM       string            `json:"key_pem"`
 	ExpectedBase string            `json:"expected_base"`
+	// JWKSURL, when set, resolves the signature's keyid to a public key
+	// by fetching the JWKS at this https URL (selecting the JWK whose
+	// kid matches) instead of using key_pem.
+	JWKSURL string `json:"jwks_url"`
 }
 
 func (s *Server) signdebugVerifyHandler(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +37,7 @@ func (s *Server) signdebugVerifyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	rep := signdebug.Verify(&req.Request, []byte(req.KeyPEM),
-		signdebug.Options{ExpectedBase: req.ExpectedBase})
+		signdebug.Options{ExpectedBase: req.ExpectedBase, JWKSURL: req.JWKSURL})
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)

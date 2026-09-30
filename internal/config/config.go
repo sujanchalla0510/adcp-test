@@ -18,6 +18,9 @@ type Config struct {
 	// BearerToken is sent as Authorization: Bearer on every probe.
 	// Used with CIMode.
 	BearerToken string
+	// Profile selects the conformance tool-surface profile: full
+	// (default), media-buy, creative, or signals. Used with CIMode.
+	Profile string
 }
 
 // FromFlags registers adcp-test flags on fs and returns the Config that
@@ -28,5 +31,6 @@ func FromFlags(fs *flag.FlagSet) *Config {
 	fs.BoolVar(&c.CIMode, "ci", false, "headless CI mode: run conformance against --target, print JSON report, exit 0 on all-pass")
 	fs.StringVar(&c.Target, "target", "", "seller agent MCP endpoint URL to test (used with --ci)")
 	fs.StringVar(&c.BearerToken, "bearer-token", "", "bearer token for the target (used with --ci)")
+	fs.StringVar(&c.Profile, "profile", "full", "conformance tool-surface profile: full, media-buy, creative, or signals (used with --ci)")
 	return c
 }

@@ -16,15 +16,15 @@ import (
 // fakeSeller is a synthetic AdCP seller for tests. Behavior is controlled
 // by mode; no real seller data is involved.
 type fakeSeller struct {
-	mode string // "", "missing-tools", "html", "accepts-unsigned", "no-list"
+	mode string // "", "missing-tools", "media-buy-only", "html", "accepts-unsigned", "no-list", "validation-only"
 }
 
 func fullToolList() []map[string]any {
 	return []map[string]any{
 		{"name": "get_adcp_capabilities", "inputSchema": map[string]any{"type": "object"}},
-		{"name": "get_products", "inputSchema": map[string]any{"type": "object", "required": []string{"brief"}}},
+		{"name": "get_products", "inputSchema": map[string]any{"type": "object", "required": []string{"buying_mode"}}},
 		{"name": "list_creative_formats", "inputSchema": map[string]any{"type": "object"}},
-		{"name": "create_media_buy", "inputSchema": map[string]any{"type": "object", "required": []string{"account", "brand", "start_time", "end_time"}}},
+		{"name": "create_media_buy", "inputSchema": map[string]any{"type": "object", "required": []string{"idempotency_key", "account", "brand", "start_time", "end_time"}}},
 		{"name": "update_media_buy", "inputSchema": map[string]any{"type": "object"}},
 		{"name": "get_media_buys", "inputSchema": map[string]any{"type": "object"}},
 		{"name": "sync_creatives", "inputSchema": map[string]any{"type": "object"}},
@@ -33,6 +33,20 @@ func fullToolList() []map[string]any {
 		{"name": "get_media_buy_delivery", "inputSchema": map[string]any{"type": "object"}},
 		{"name": "provide_performance_feedback", "inputSchema": map[string]any{"type": "object"}},
 		{"name": "get_signals", "inputSchema": map[string]any{"type": "object"}},
+	}
+}
+
+// mediaBuyToolList is the media-buy agent profile surface: capabilities
+// plus the six media-buy tasks (no creative/signals/aux tools).
+func mediaBuyToolList() []map[string]any {
+	return []map[string]any{
+		{"name": "get_adcp_capabilities", "inputSchema": map[string]any{"type": "object"}},
+		{"name": "get_products", "inputSchema": map[string]any{"type": "object", "required": []string{"buying_mode"}}},
+		{"name": "create_media_buy", "inputSchema": map[string]any{"type": "object", "required": []string{"idempotency_key", "account", "brand", "start_time", "end_time"}}},
+		{"name": "update_media_buy", "inputSchema": map[string]any{"type": "object"}},
+		{"name": "get_media_buys", "inputSchema": map[string]any{"type": "object"}},
+		{"name": "get_media_buy_delivery", "inputSchema": map[string]any{"type": "object"}},
+		{"name": "provide_performance_feedback", "inputSchema": map[string]any{"type": "object"}},
 	}
 }
 
@@ -65,8 +79,11 @@ func (f *fakeSeller) handler() http.HandlerFunc {
 				break
 			}
 			tools := fullToolList()
-			if f.mode == "missing-tools" {
+			switch f.mode {
+			case "missing-tools":
 				tools = tools[:1] // only get_adcp_capabilities
+			case "media-buy-only":
+				tools = mediaBuyToolList()
 			}
 			resp["result"] = map[string]any{"tools": tools}
 		case "tools/call":
@@ -83,6 +100,11 @@ func (f *fakeSeller) handler() http.HandlerFunc {
 				switch {
 				case f.mode == "accepts-unsigned":
 					resp["result"] = map[string]any{"content": []map[string]any{{"type": "text", "text": `{"media_buy_id":"mb_1"}`}}}
+				case f.mode == "validation-only":
+					// Rejects everything for argument reasons, never for
+					// auth: the probes must FAIL here (they cannot
+					// distinguish auth enforcement from validation).
+					fail(-32602, "invalid params: account 'adcp-test-probe-account' is not a known account id")
 				case sigIn == "" || sig == "":
 					fail(-32001, "missing required Signature-Input/Signature headers: request must be RFC 9421 signed")
 				case strings.Contains(sig, "!!!") || strings.Contains(sigIn, "notanumber"):
@@ -103,12 +125,16 @@ func (f *fakeSeller) handler() http.HandlerFunc {
 }
 
 func runAgainst(t *testing.T, mode string) *Report {
+	return runAgainstProfile(t, mode, "")
+}
+
+func runAgainstProfile(t *testing.T, mode, profile string) *Report {
 	t.Helper()
 	srv := httptest.NewServer((&fakeSeller{mode: mode}).handler())
 	t.Cleanup(srv.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	rep, err := Run(ctx, srv.URL, Options{Timeout: 5 * time.Second})
+	rep, err := Run(ctx, srv.URL, Options{Timeout: 5 * time.Second, Profile: profile})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -191,6 +217,57 @@ func TestRunAcceptsUnsignedMutation(t *testing.T) {
 	}
 }
 
+func TestRunValidationOnlyAuthProbesFail(t *testing.T) {
+	// A seller that rejects everything for argument-validation reasons
+	// must NOT pass the auth probes: the probes cannot distinguish auth
+	// enforcement from validation.
+	rep := runAgainst(t, "validation-only")
+	for _, n := range []string{"auth:unsigned-mutating-call-rejected", "auth:malformed-signature-rejected"} {
+		c := checkByName(rep, n)
+		if c.Status != StatusFail {
+			t.Fatalf("%s = %s, want fail: %s", n, c.Status, c.Detail)
+		}
+		if !strings.Contains(strings.ToLower(c.Detail), "cannot confirm") {
+			t.Fatalf("%s detail should explain the ambiguity: %s", n, c.Detail)
+		}
+	}
+	if rep.AllPassed() {
+		t.Fatal("AllPassed = true despite ambiguous auth probes")
+	}
+}
+
+func TestProfileMediaBuy(t *testing.T) {
+	// A media-buy-profile seller passes the media-buy profile.
+	rep := runAgainstProfile(t, "media-buy-only", "media-buy")
+	if c := checkByName(rep, "tool-surface"); c.Status != StatusPass {
+		t.Fatalf("media-buy profile tool-surface = %s, want pass: %s", c.Status, c.Detail)
+	}
+	// The same seller fails the full profile (missing the rest).
+	rep = runAgainstProfile(t, "media-buy-only", "full")
+	if c := checkByName(rep, "tool-surface"); c.Status != StatusFail {
+		t.Fatalf("full profile tool-surface = %s, want fail: %s", c.Status, c.Detail)
+	} else if !strings.Contains(c.Detail, "list_creative_formats") {
+		t.Fatalf("full profile detail should name missing tools: %s", c.Detail)
+	}
+	// And fails the signals profile (missing get_signals).
+	rep = runAgainstProfile(t, "media-buy-only", "signals")
+	if c := checkByName(rep, "tool-surface"); c.Status != StatusFail {
+		t.Fatalf("signals profile tool-surface = %s, want fail: %s", c.Status, c.Detail)
+	} else if !strings.Contains(c.Detail, "get_signals") {
+		t.Fatalf("signals profile detail should name get_signals: %s", c.Detail)
+	}
+}
+
+func TestUnknownProfile(t *testing.T) {
+	srv := httptest.NewServer((&fakeSeller{mode: ""}).handler())
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, srv.URL, Options{Profile: "bogus"}); err == nil {
+		t.Fatal("Run with unknown profile: expected error, got nil")
+	}
+}
+
 func TestRunInvalidTarget(t *testing.T) {
 	for _, target := range []string{"", "not-a-url", "ftp://example.com/x", "http://"} {
 		if _, err := Run(context.Background(), target, Options{}); err == nil {
@@ -246,13 +323,13 @@ func TestReportJSONRoundTrip(t *testing.T) {
 }
 
 func TestValidateInputSchema(t *testing.T) {
-	exp := ExpectedTool{Name: "get_products", Required: true, ExpectedRequired: []string{"brief"}}
-	if probs := validateInputSchema(exp, []byte(`{"type":"object","required":["brief"]}`)); len(probs) != 0 {
+	exp := ExpectedTool{Name: "get_products", Required: true, ExpectedRequired: []string{"buying_mode"}}
+	if probs := validateInputSchema(exp, []byte(`{"type":"object","required":["buying_mode"]}`)); len(probs) != 0 {
 		t.Fatalf("valid schema rejected: %v", probs)
 	}
 	if probs := validateInputSchema(exp, []byte(`{"type":"object"}`)); len(probs) == 0 {
 		t.Fatal("schema missing required field accepted")
-	} else if !strings.Contains(probs[0], `"brief"`) {
+	} else if !strings.Contains(probs[0], `"buying_mode"`) {
 		t.Fatalf("problem should name the missing field: %v", probs)
 	}
 	if probs := validateInputSchema(exp, []byte(`{"type":"array"}`)); len(probs) == 0 {

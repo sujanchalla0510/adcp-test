@@ -46,17 +46,22 @@ const maxSpecdiffRun = 5 * time.Minute
 
 // runSpecdiff diffs two AdCP spec-version expectation surfaces.
 //
-//	adcp-test specdiff --from 3.1 --to 4.0 [--target <seller-mcp-url>]
+//	adcp-test specdiff --from 3.1 --to 4.0-draft-expectations [--target <seller-mcp-url>]
 //	    [--bearer-token T] [--surface-only]
 //
 // Without --target (the default), it prints the pure surface diff:
 // added/removed/changed tools and auth-requirement changes. With
 // --target, it runs conformance against the seller and flags what would
 // break under the newer spec's expectations.
+//
+// "4.0-draft-expectations" is NOT a published spec: it is a draft
+// expectation set derived from public implementer discussion (see the
+// source field on every change). A warning banner is printed whenever
+// the draft side is involved.
 func runSpecdiff(args []string, stdout io.Writer) int {
 	fs := flag.NewFlagSet("specdiff", flag.ContinueOnError)
-	from := fs.String("from", "3.1", "older spec version (known: 3.1, 4.0)")
-	to := fs.String("to", "4.0", "newer spec version (known: 3.1, 4.0)")
+	from := fs.String("from", "3.1", "older spec version (known: 3.1, 4.0-draft-expectations)")
+	to := fs.String("to", "4.0-draft-expectations", "newer spec version (known: 3.1, 4.0-draft-expectations)")
 	target := fs.String("target", "", "seller MCP endpoint URL: ground the diff against a live run")
 	bearer := fs.String("bearer-token", "", "bearer token for the target (optional)")
 	surfaceOnly := fs.Bool("surface-only", false, "print only the surface diff, even with --target")
@@ -73,6 +78,11 @@ func runSpecdiff(args []string, stdout io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "specdiff:", err)
 		return 2
+	}
+	if fromS.Status == specdiff.StatusDraftExpectation || toS.Status == specdiff.StatusDraftExpectation {
+		fmt.Fprintln(os.Stderr, "WARNING: specdiff involves 4.0-draft-expectations, which is NOT a published AdCP spec.")
+		fmt.Fprintln(os.Stderr, "It is a draft expectation set derived from public implementer discussion (AdCP Slack auth discussion, 2026-09-28).")
+		fmt.Fprintln(os.Stderr, "Do not cite it as the AdCP 4.0 spec; verify every entry against the released spec.")
 	}
 	d := specdiff.DiffSurfaces(fromS, toS)
 

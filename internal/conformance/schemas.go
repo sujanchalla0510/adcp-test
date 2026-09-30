@@ -9,48 +9,57 @@ var jsonUnmarshal = json.Unmarshal
 
 // ExpectedTool describes one AdCP tool the conformance checker looks for.
 //
-// The required set below is the documented AdCP media-buy protocol core
-// (v3-era task list: get_adcp_capabilities, get_products,
-// list_creative_formats, create_media_buy, update_media_buy, get_media_buys,
-// sync_creatives, sync_catalogs, list_creatives, get_media_buy_delivery,
-// provide_performance_feedback). Optional tools belong to sibling protocols
-// (signals, accounts) or older revisions; their absence is informational,
-// never a failure.
+// The profile system selects the required set per run, grounded in the
+// AdCP spec's docs/protocol/required-tasks.mdx ("Required tasks by
+// protocol"). Profiles:
+//   - "full": historical strict behavior — every tool marked Required
+//     below. A superset of the spec; use it for a complete seller.
+//   - "media-buy": media-buy sales agent profile (get_adcp_capabilities
+//   - get_products, create_media_buy, update_media_buy, get_media_buys,
+//     get_media_buy_delivery, provide_performance_feedback).
+//   - "creative": creative agent profile (get_adcp_capabilities;
+//     list_transformers/list_creatives/sync_creatives are conditional on
+//     capabilities, so their absence is informational).
+//   - "signals": signal agent profile (get_adcp_capabilities,
+//     get_signals, activate_signal).
 type ExpectedTool struct {
 	// Name is the MCP tool name.
 	Name string
-	// Required means a missing tool fails the tool-surface check.
+	// Required means a missing tool fails the tool-surface check under
+	// the "full" profile (historical strict behavior).
 	Required bool
 	// ExpectedRequired lists input fields the tool's declared inputSchema
-	// must require. Kept minimal on purpose: only fields that are stable
-	// across spec revisions are asserted. Empty means "structural check
-	// only" (valid object schema).
+	// must require, taken from the AdCP 3.1 task schemas (e.g. the 3.1
+	// get-products-request schema requires buying_mode; brief is
+	// optional). Empty means "structural check only".
 	ExpectedRequired []string
+	// Profiles lists the agent profiles for which this tool is required.
+	Profiles []string
 	// Description is human context for reports.
 	Description string
 }
 
 // CoreTools is the expected AdCP seller tool surface.
 var CoreTools = []ExpectedTool{
-	{Name: "get_adcp_capabilities", Required: true, Description: "agent capabilities / supported protocols"},
-	{Name: "get_products", Required: true, ExpectedRequired: []string{"brief"}, Description: "product discovery via natural-language brief"},
-	{Name: "list_creative_formats", Required: true, Description: "creative format specifications"},
-	{Name: "create_media_buy", Required: true, ExpectedRequired: []string{"account", "brand", "start_time", "end_time"}, Description: "create a media buy (mutating)"},
-	{Name: "update_media_buy", Required: true, Description: "modify a media buy (mutating)"},
-	{Name: "get_media_buys", Required: true, Description: "retrieve media-buy state"},
-	{Name: "sync_creatives", Required: true, Description: "upload creative assets (mutating)"},
-	{Name: "sync_catalogs", Required: true, Description: "sync product catalog feeds (mutating)"},
-	{Name: "list_creatives", Required: true, Description: "query the creative library"},
-	{Name: "get_media_buy_delivery", Required: true, Description: "delivery / performance reporting"},
-	{Name: "provide_performance_feedback", Required: true, Description: "share outcomes back with the publisher"},
+	{Name: "get_adcp_capabilities", Required: true, Profiles: []string{"full", "media-buy", "creative", "signals"}, Description: "agent capabilities / supported protocols"},
+	{Name: "get_products", Required: true, ExpectedRequired: []string{"buying_mode"}, Profiles: []string{"full", "media-buy"}, Description: "product discovery (brief is optional per the 3.1 schema; buying_mode is required)"},
+	{Name: "list_creative_formats", Required: true, Profiles: []string{"full"}, Description: "creative format specifications"},
+	{Name: "create_media_buy", Required: true, ExpectedRequired: []string{"idempotency_key", "account", "brand", "start_time", "end_time"}, Profiles: []string{"full", "media-buy"}, Description: "create a media buy (mutating)"},
+	{Name: "update_media_buy", Required: true, Profiles: []string{"full", "media-buy"}, Description: "modify a media buy (mutating)"},
+	{Name: "get_media_buys", Required: true, Profiles: []string{"full", "media-buy"}, Description: "retrieve media-buy state"},
+	{Name: "sync_creatives", Required: true, Profiles: []string{"full"}, Description: "upload creative assets (mutating; conditional in the media-buy profile)"},
+	{Name: "sync_catalogs", Required: true, Profiles: []string{"full"}, Description: "sync product catalog feeds (mutating)"},
+	{Name: "list_creatives", Required: true, Profiles: []string{"full"}, Description: "query the creative library"},
+	{Name: "get_media_buy_delivery", Required: true, Profiles: []string{"full", "media-buy"}, Description: "delivery / performance reporting"},
+	{Name: "provide_performance_feedback", Required: true, Profiles: []string{"full", "media-buy"}, Description: "share outcomes back with the publisher"},
 	// Optional: documented but protocol- or revision-specific.
-	{Name: "get_signals", Required: false, Description: "audience signals lookup (signals protocol)"},
-	{Name: "activate_signal", Required: false, Description: "activate audience signals (signals protocol)"},
-	{Name: "list_authorized_properties", Required: false, Description: "publisher properties (older capability alias)"},
-	{Name: "sync_accounts", Required: false, Description: "account onboarding"},
-	{Name: "build_creative", Required: false, Description: "AI creative builder"},
-	{Name: "check_governance", Required: false, Description: "governance checks"},
-	{Name: "log_event", Required: false, Description: "conversion event logging"},
+	{Name: "get_signals", Required: false, Profiles: []string{"full", "signals"}, Description: "audience signals lookup (signals protocol)"},
+	{Name: "activate_signal", Required: false, Profiles: []string{"full", "signals"}, Description: "activate audience signals (signals protocol)"},
+	{Name: "list_authorized_properties", Required: false, Profiles: []string{"full"}, Description: "publisher properties (older capability alias)"},
+	{Name: "sync_accounts", Required: false, Profiles: []string{"full"}, Description: "account onboarding"},
+	{Name: "build_creative", Required: false, Profiles: []string{"full"}, Description: "AI creative builder"},
+	{Name: "check_governance", Required: false, Profiles: []string{"full"}, Description: "governance checks"},
+	{Name: "log_event", Required: false, Profiles: []string{"full"}, Description: "conversion event logging"},
 }
 
 // expectedToolByName indexes CoreTools by name.

@@ -62,7 +62,7 @@
 //	    agent can drive conformance, scenarios, the signing debugger,
 //	    and lifecycle checks without shelling out to the CLI.
 //
-//	adcp-test specdiff --from 3.1 --to 4.0 [--target <seller-mcp-url>]
+//	adcp-test specdiff --from 3.1 --to 4.0-draft-expectations [--target <seller-mcp-url>]
 //	    Diff two AdCP spec-version expectation surfaces (added/removed/
 //	    changed tools, auth-requirement changes). With --target, run
 //	    conformance and flag what would break under the newer spec.
@@ -132,7 +132,7 @@ func main() {
 	flag.Parse()
 
 	if cfg.CIMode {
-		os.Exit(runConformanceCI(os.Stdout, cfg.Target, cfg.BearerToken))
+		os.Exit(runConformanceCI(os.Stdout, cfg.Target, cfg.BearerToken, cfg.Profile))
 	}
 
 	srv := server.New(cfg)
@@ -143,10 +143,10 @@ func main() {
 // runConformanceCI runs the conformance suite headless against target,
 // writes the JSON report to w, and returns the process exit code:
 // 0 when every check passes, 1 otherwise.
-func runConformanceCI(w io.Writer, target, bearerToken string) int {
+func runConformanceCI(w io.Writer, target, bearerToken, profile string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), maxCIRun)
 	defer cancel()
-	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: bearerToken})
+	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: bearerToken, Profile: profile})
 	if err != nil {
 		writeCIError(w, err.Error())
 		return 1

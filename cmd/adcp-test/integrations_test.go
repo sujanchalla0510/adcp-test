@@ -58,7 +58,7 @@ func TestRunMCPBadFlag(t *testing.T) {
 
 func TestRunSpecdiffSurfaceOnly(t *testing.T) {
 	var out bytes.Buffer
-	if code := runSpecdiff([]string{"--from", "3.1", "--to", "4.0"}, &out); code != 0 {
+	if code := runSpecdiff([]string{"--from", "3.1", "--to", "4.0-draft-expectations"}, &out); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	var d struct {
@@ -73,8 +73,8 @@ func TestRunSpecdiffSurfaceOnly(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &d); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
 	}
-	if d.From != "3.1" || d.To != "4.0" {
-		t.Errorf("endpoints = %s -> %s, want 3.1 -> 4.0", d.From, d.To)
+	if d.From != "3.1" || d.To != "4.0-draft-expectations" {
+		t.Errorf("endpoints = %s -> %s, want 3.1 -> 4.0-draft-expectations", d.From, d.To)
 	}
 	if d.ToStatus != "draft-expectation" {
 		t.Errorf("to_status = %q, want draft-expectation", d.ToStatus)
@@ -100,7 +100,7 @@ func TestRunSpecdiffBadVersion(t *testing.T) {
 func TestRunSpecdiffAgainstFake(t *testing.T) {
 	srv := minimalFakeSeller(t) // advertises no tools: surface unreadable
 	var out bytes.Buffer
-	code := runSpecdiff([]string{"--from", "3.1", "--to", "4.0", "--target", srv.URL}, &out)
+	code := runSpecdiff([]string{"--from", "3.1", "--to", "4.0-draft-expectations", "--target", srv.URL}, &out)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (no would-fail findings when surface unreadable)", code)
 	}

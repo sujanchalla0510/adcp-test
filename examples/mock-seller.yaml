@@ -4,23 +4,35 @@
 # examples/README.md. Everything here is synthetic: product names, ids,
 # budgets and URLs are invented for testing adcp-test itself.
 #
-# It advertises the full required AdCP tool surface, rejects the
-# deliberately-invalid conformance probes with structured JSON-RPC errors
+# It advertises the full required AdCP tool surface, rejects adcp-test's
+# synthetic unsigned auth probes with structured JSON-RPC errors
 # (code -32001), and drives media buys through a lifecycle state machine
 # (draft -> active -> paused -> active -> cancelled).
 mocks:
   - name: example-seller
     listen: 127.0.0.1:8089
     routes:
-      # Deliberately-invalid probes (unsigned / malformed / wrong types) get
-      # a structured rejection, the way a real seller must. Listed first so
-      # it matches before the generic create_media_buy route below.
-      - match: { tool: create_media_buy, args: { start_time: 12345 } }
+      # adcp-test's synthetic auth probes (unsigned / malformed signature,
+      # valid well-typed args marked with the adcp-test-probe- account) get
+      # a structured rejection, the way a real seller must. This mock cannot
+      # inspect Signature headers, so it matches the probe marker account.
+      # Listed first so it matches before the generic create_media_buy
+      # route below.
+      - match: { tool: create_media_buy, args: { account: adcp-test-probe-account } }
         respond:
           error:
             code: -32001
             message: unsigned or malformed mutating call rejected
             data: { reason: auth }
+      # Wrong-type args (the errors probe) get a structured validation
+      # error, the way a real seller must. The malformed-signature auth
+      # probe sends well-typed args, so this pattern never matches it.
+      - match: { tool: create_media_buy, args: { start_time: 12345 } }
+        respond:
+          error:
+            code: -32602
+            message: "invalid arguments: start_time must be a string"
+            data: { reason: validation }
       - match: { tool: get_adcp_capabilities }
         respond:
           inline:
@@ -40,8 +52,9 @@ mocks:
                 price_micros: 15000000
         input_schema:
           type: object
-          required: [brief]
+          required: [buying_mode]
           properties:
+            buying_mode: { type: string }
             brief: { type: string }
       - match: { tool: list_creative_formats }
         respond:
@@ -57,8 +70,9 @@ mocks:
           template: responses/create.json
         input_schema:
           type: object
-          required: [account, brand, start_time, end_time]
+          required: [idempotency_key, account, brand, start_time, end_time]
           properties:
+            idempotency_key: { type: string }
             account: { type: string }
             brand: { type: string }
             start_time: { type: string }

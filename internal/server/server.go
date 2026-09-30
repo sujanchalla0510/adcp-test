@@ -131,6 +131,9 @@ type conformanceRunRequest struct {
 	TargetURL   string `json:"target_url"`
 	TargetURLV2 string `json:"targetUrl"` // alias
 	BearerToken string `json:"bearer_token"`
+	// Profile selects the tool-surface profile: full (default),
+	// media-buy, creative, or signals.
+	Profile string `json:"profile"`
 }
 
 // conformanceRunHandler runs the conformance suite against the
@@ -152,7 +155,7 @@ func conformanceRunHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxConformanceRun)
 	defer cancel()
-	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: req.BearerToken})
+	rep, err := conformance.Run(ctx, target, conformance.Options{BearerToken: req.BearerToken, Profile: req.Profile})
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return

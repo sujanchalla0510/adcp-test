@@ -33,7 +33,7 @@ func TestSurface31IsPublishedBaseline(t *testing.T) {
 }
 
 func TestSurface40IsDraft(t *testing.T) {
-	s, _ := Get("4.0")
+	s, _ := Get("4.0-draft-expectations")
 	if s.Status != StatusDraftExpectation {
 		t.Errorf("4.0 status = %q, want draft-expectation", s.Status)
 	}
@@ -64,9 +64,9 @@ func TestSurface40IsDraft(t *testing.T) {
 
 func TestDiffSurfaces31To40(t *testing.T) {
 	from, _ := Get("3.1")
-	to, _ := Get("4.0")
+	to, _ := Get("4.0-draft-expectations")
 	d := DiffSurfaces(from, to)
-	if d.From != "3.1" || d.To != "4.0" {
+	if d.From != "3.1" || d.To != "4.0-draft-expectations" {
 		t.Fatalf("bad diff endpoints: %+v", d)
 	}
 	if d.ToStatus != StatusDraftExpectation {
@@ -132,7 +132,7 @@ func TestDiffAgainstTarget(t *testing.T) {
 	target := startExampleSeller(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	rep, err := DiffAgainstTarget(ctx, target, "3.1", "4.0", "")
+	rep, err := DiffAgainstTarget(ctx, target, "3.1", "4.0-draft-expectations", "")
 	if err != nil {
 		t.Fatalf("DiffAgainstTarget: %v", err)
 	}
@@ -167,4 +167,42 @@ func TestDiffAgainstTargetBadVersion(t *testing.T) {
 	if _, err := DiffAgainstTarget(ctx, "http://127.0.0.1:1", "3.1", "9.9", ""); err == nil {
 		t.Error("unknown to-version should fail")
 	}
+}
+
+func TestDraftVersionNameIsNotBare40(t *testing.T) {
+	if _, err := Get("4.0"); err == nil {
+		t.Fatal(`Get("4.0"): expected error; the draft expectations must not be addressable as "4.0"`)
+	}
+}
+
+func TestDraftChangesCarrySource(t *testing.T) {
+	from, _ := Get("3.1")
+	to, _ := Get("4.0-draft-expectations")
+	d := DiffSurfaces(from, to)
+	if len(d.ToolChanges) == 0 && len(d.AuthChanges) == 0 {
+		t.Fatal("expected some changes between 3.1 and the draft expectations")
+	}
+	for _, c := range d.ToolChanges {
+		if c.Source == "" {
+			t.Errorf("tool change %s has no source citation", c.Tool)
+		} else if !containsNotPublished(c.Source) {
+			t.Errorf("tool change %s source does not disclaim spec status: %q", c.Tool, c.Source)
+		}
+	}
+	for _, c := range d.AuthChanges {
+		if c.Source == "" {
+			t.Errorf("auth change %s|%s has no source citation", c.Scope, c.Mechanism)
+		} else if !containsNotPublished(c.Source) {
+			t.Errorf("auth change %s|%s source does not disclaim spec status: %q", c.Scope, c.Mechanism, c.Source)
+		}
+	}
+	for _, a := range to.Auth {
+		if a.Source == "" {
+			t.Errorf("draft auth requirement %s|%s has no source citation", a.Scope, a.Mechanism)
+		}
+	}
+}
+
+func containsNotPublished(s string) bool {
+	return strings.Contains(s, "NOT a published spec")
 }

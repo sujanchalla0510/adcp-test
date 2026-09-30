@@ -79,6 +79,40 @@ type Options struct {
 	Timeout time.Duration
 	// BearerToken is sent as Authorization: Bearer on every probe.
 	BearerToken string
+	// Profile selects the required tool surface: "full" (default;
+	// historical strict behavior — every Required tool), "media-buy",
+	// "creative", or "signals", grounded in the AdCP spec's
+	// docs/protocol/required-tasks.mdx ("Required tasks by protocol").
+	Profile string
+}
+
+// Profiles are the valid Options.Profile values.
+var Profiles = []string{"full", "media-buy", "creative", "signals"}
+
+// normalizeProfile resolves "" to "full" and rejects unknown profiles.
+func normalizeProfile(p string) (string, error) {
+	if p == "" {
+		return "full", nil
+	}
+	for _, v := range Profiles {
+		if p == v {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("conformance: unknown profile %q (valid: %s)", p, strings.Join(Profiles, ", "))
+}
+
+// profileRequired reports whether the tool is required under the profile.
+func profileRequired(t ExpectedTool, profile string) bool {
+	if profile == "full" {
+		return t.Required
+	}
+	for _, p := range t.Profiles {
+		if p == profile {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultTimeout is used when Options.Timeout is <= 0.
@@ -100,10 +134,14 @@ func Run(ctx context.Context, targetURL string, opts Options) (*Report, error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
+	profile, err := normalizeProfile(opts.Profile)
+	if err != nil {
+		return nil, err
+	}
 	client := &mcpclient.Client{Endpoint: targetURL, Timeout: timeout, BearerToken: opts.BearerToken}
 
 	rep := &Report{TargetURL: targetURL, StartedAt: time.Now().UTC()}
-	r := &runner{ctx: ctx, client: client}
+	r := &runner{ctx: ctx, client: client, profile: profile}
 
 	tools, surfaceOK := r.checkToolSurface(rep)
 	r.checkSchemas(rep, tools, surfaceOK)
@@ -116,8 +154,9 @@ func Run(ctx context.Context, targetURL string, opts Options) (*Report, error) {
 }
 
 type runner struct {
-	ctx    context.Context
-	client *mcpclient.Client
+	ctx     context.Context
+	client  *mcpclient.Client
+	profile string
 }
 
 func (r *runner) record(rep *Report, name string, status Status, detail string, d time.Duration) {
@@ -144,7 +183,7 @@ func (r *runner) checkToolSurface(rep *Report) ([]mcpclient.Tool, bool) {
 	var missing, missingOptional []string
 	for _, exp := range CoreTools {
 		if !present[exp.Name] {
-			if exp.Required {
+			if profileRequired(exp, r.profile) {
 				missing = append(missing, exp.Name)
 			} else {
 				missingOptional = append(missingOptional, exp.Name)
@@ -153,10 +192,10 @@ func (r *runner) checkToolSurface(rep *Report) ([]mcpclient.Tool, bool) {
 	}
 	if len(missing) > 0 {
 		r.record(rep, "tool-surface", StatusFail,
-			fmt.Sprintf("advertised %d tools; missing required: %s", len(tools), strings.Join(missing, ", ")), d)
+			fmt.Sprintf("profile %q: advertised %d tools; missing required: %s", r.profile, len(tools), strings.Join(missing, ", ")), d)
 		return tools, true
 	}
-	detail := fmt.Sprintf("advertised %d tools; all %d required AdCP tools present", len(tools), countRequired())
+	detail := fmt.Sprintf("profile %q: advertised %d tools; all %d required AdCP tools present", r.profile, len(tools), countRequired(r.profile))
 	if len(missingOptional) > 0 {
 		detail += fmt.Sprintf("; optional tools absent (informational): %s", strings.Join(missingOptional, ", "))
 	}
@@ -164,10 +203,10 @@ func (r *runner) checkToolSurface(rep *Report) ([]mcpclient.Tool, bool) {
 	return tools, true
 }
 
-func countRequired() int {
+func countRequired(profile string) int {
 	n := 0
 	for _, t := range CoreTools {
-		if t.Required {
+		if profileRequired(t, profile) {
 			n++
 		}
 	}
@@ -185,11 +224,14 @@ func (r *runner) checkSchemas(rep *Report, tools []mcpclient.Tool, surfaceOK boo
 		name := "schema:" + exp.Name
 		t, ok := byName[exp.Name]
 		if !ok {
-			if !surfaceOK {
+			switch {
+			case !surfaceOK:
 				r.record(rep, name, StatusSkip, "skipped: tools/list failed", 0)
-			} else if exp.Required {
+			case r.profile != "full" && !profileRequired(exp, r.profile):
+				r.record(rep, name, StatusSkip, fmt.Sprintf("skipped: not required under profile %q", r.profile), 0)
+			case profileRequired(exp, r.profile):
 				r.record(rep, name, StatusSkip, "skipped: tool not advertised (see tool-surface)", 0)
-			} else {
+			default:
 				r.record(rep, name, StatusSkip, "skipped: optional tool not advertised", 0)
 			}
 			continue
@@ -213,22 +255,28 @@ func (r *runner) checkAuthProbes(rep *Report, tools []mcpclient.Tool, surfaceOK 
 		present[t.Name] = true
 	}
 
-	// Probe arguments are deliberately invalid (wrong types) so no
-	// conforming seller can mistake them for a real mutation.
-	invalidProbeArgs := map[string]any{
-		"buyer_ref":  "adcp-test-probe-INVALID",
-		"start_time": 12345,
-		"end_time":   12345,
+	// Probe arguments are valid and well-typed per the AdCP 3.1 schemas
+	// (they must survive argument validation so the seller's rejection,
+	// if any, is about authentication — not about bad arguments).
+	// Every value is prefixed adcp-test-probe- so no seller can mistake
+	// them for a real buy, and the probes are never RFC 9421 signed, so
+	// a conforming seller rejects them before doing anything.
+	validProbeArgs := map[string]any{
+		"idempotency_key": "adcp-test-probe-00000000-0000-0000-0000-000000000000",
+		"account":         "adcp-test-probe-account",
+		"brand":           "adcp-test-probe-brand",
+		"start_time":      "2030-01-01T00:00:00Z",
+		"end_time":        "2030-02-01T00:00:00Z",
 	}
 
 	// (a) unsigned mutating call.
 	r.authProbe(rep, "auth:unsigned-mutating-call-rejected", present, probeMutatingTool, surfaceOK,
-		invalidProbeArgs, nil,
+		validProbeArgs, nil,
 		"unsigned create_media_buy")
 
 	// (b) malformed RFC 9421 signature headers.
 	r.authProbe(rep, "auth:malformed-signature-rejected", present, probeMutatingTool, surfaceOK,
-		invalidProbeArgs,
+		validProbeArgs,
 		map[string]string{
 			"Signature-Input": `sig1=("@method" "@target-uri");created=notanumber`,
 			"Signature":       `sig1=:!!!not-base64!!!:`,
@@ -246,7 +294,10 @@ func (r *runner) checkAuthProbes(rep *Report, tools []mcpclient.Tool, surfaceOK 
 		return
 	}
 	start := time.Now()
-	res, err := r.client.CallTool(r.ctx, probeReadTool, map[string]any{"brief": "adcp-test conformance probe"})
+	res, err := r.client.CallTool(r.ctx, probeReadTool, map[string]any{
+		"buying_mode": "brief",
+		"brief":       "adcp-test conformance probe (synthetic; no real buy)",
+	})
 	d := time.Since(start)
 	switch {
 	case err == nil && res.IsError:
@@ -267,7 +318,19 @@ func (r *runner) checkAuthProbes(rep *Report, tools []mcpclient.Tool, surfaceOK 
 	}
 }
 
-// authProbe sends one mutating probe and expects a structured rejection.
+// authProbe sends one mutating probe and requires an auth/signature-class
+// rejection.
+//
+// The probe carries VALID, well-typed, clearly synthetic arguments, so a
+// seller that validates arguments before checking signatures will pass
+// argument validation and only reject on the missing/malformed signature.
+// PASS requires the rejection to be auth/signature-class: a structured
+// JSON-RPC error whose message looks like an auth error, or a tool-level
+// error whose text does. A rejection for any other reason (e.g. argument
+// validation) is a FAIL — the probe cannot distinguish "seller enforces
+// signing" from "seller rejects bad arguments", and claiming otherwise
+// would be a false positive. Acceptance is a FAIL: the seller performed
+// (or would perform) a mutating call with no signature.
 func (r *runner) authProbe(rep *Report, name string, present map[string]bool, tool string, surfaceOK bool,
 	args map[string]any, headers map[string]string, what string) {
 	if !surfaceOK || !present[tool] {
@@ -292,21 +355,49 @@ func (r *runner) authProbe(rep *Report, name string, present map[string]bool, to
 		r.record(rep, name, StatusFail,
 			fmt.Sprintf("%s was ACCEPTED by the seller (no rejection); a conforming seller must reject unsigned/malformed mutating calls", what), d)
 	case err == nil:
-		r.record(rep, name, StatusPass,
-			fmt.Sprintf("%s returned a tool-level error (rejected; not an auth error, but not accepted)", what), d)
+		text := toolErrorText(res)
+		if looksLikeAuthText(text) {
+			r.record(rep, name, StatusPass,
+				fmt.Sprintf("%s rejected with auth/signature-class tool error: %s", what, truncate(text, 200)), d)
+		} else {
+			r.record(rep, name, StatusFail,
+				fmt.Sprintf("%s rejected, but not for auth/signature reasons (tool error: %s); cannot confirm the seller enforces signing", what, truncate(text, 200)), d)
+		}
 	default:
 		var cerr *mcpclient.Error
 		if errors.As(err, &cerr) && cerr.Kind == mcpclient.KindRPC {
-			kind := "structured rejection"
 			if looksLikeAuthError(cerr.RPC) {
-				kind = "auth/signature rejection"
+				r.record(rep, name, StatusPass,
+					fmt.Sprintf("%s rejected with auth/signature-class error: JSON-RPC %d (%s)", what, cerr.RPC.Code, cerr.RPC.Message), d)
+			} else {
+				r.record(rep, name, StatusFail,
+					fmt.Sprintf("%s rejected with non-auth error JSON-RPC %d (%s); cannot confirm the seller enforces signing", what, cerr.RPC.Code, cerr.RPC.Message), d)
 			}
-			r.record(rep, name, StatusPass,
-				fmt.Sprintf("%s rejected with %s: JSON-RPC %d (%s)", what, kind, cerr.RPC.Code, cerr.RPC.Message), d)
 		} else {
 			r.record(rep, name, StatusFail, describeClientError(what, err), d)
 		}
 	}
+}
+
+// toolErrorText joins the text content items of a tool-level error.
+func toolErrorText(res *mcpclient.CallResult) string {
+	if res == nil {
+		return ""
+	}
+	var parts []string
+	for _, c := range res.Content {
+		if strings.TrimSpace(c.Text) != "" {
+			parts = append(parts, c.Text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // looksLikeAuthError heuristically detects auth/signature rejections.
@@ -314,8 +405,14 @@ func looksLikeAuthError(rpc *mcpclient.RPCError) bool {
 	if rpc == nil {
 		return false
 	}
-	hay := strings.ToLower(rpc.Message + " " + string(rpc.Data))
-	for _, kw := range []string{"auth", "sign", "unauthorized", "forbidden", "401", "403"} {
+	return looksLikeAuthText(rpc.Message + " " + string(rpc.Data))
+}
+
+// looksLikeAuthText heuristically detects auth/signature rejection text,
+// whether it arrives as a JSON-RPC error or a tool-level error payload.
+func looksLikeAuthText(text string) bool {
+	hay := strings.ToLower(text)
+	for _, kw := range []string{"auth", "sign", "unauthorized", "forbidden", "401", "403", "authenticate", "credential", "token", "keyid", "jwks"} {
 		if strings.Contains(hay, kw) {
 			return true
 		}

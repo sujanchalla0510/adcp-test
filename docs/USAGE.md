@@ -48,9 +48,10 @@ drives media buys through a lifecycle state machine.
 
 **2. Run conformance.** In the UI: **Conformance** → enter
 `http://127.0.0.1:8089` → **Run conformance**. The 24-check suite probes the
-tool surface, input schemas, auth behavior, and error taxonomy. Probes are
-read-only — the unsigned and malformed-signature probes use deliberately
-invalid arguments, so a conforming seller can never act on them.
+tool surface, input schemas, auth behavior, and error taxonomy. The auth
+probes are safe and synthetic — valid, well-typed calls marked with
+`adcp-test-probe-*` values and 2030 dates, never signed — so a conforming
+seller can never mistake them for real mutations.
 
 ![Conformance results](screenshots/conformance.png)
 
