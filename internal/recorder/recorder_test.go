@@ -90,7 +90,7 @@ func TestProxyRoundTrip(t *testing.T) {
 	defer up.Close()
 	rec, proxyURL := startRecorder(t, up.URL)
 
-	callBody := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_products","arguments":{"brief":"running shoes","token":"live-secret-token"}}}`
+	callBody := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_products","arguments":{"buying_mode":"brief","brief":"running shoes","token":"live-secret-token"}}}`
 	code, respBody := postRPC(t, proxyURL, callBody, map[string]string{
 		"Authorization": "Bearer buyer-secret",
 		SessionIDHeader: "pinned-1",
@@ -154,7 +154,7 @@ func TestProxyRoundTrip(t *testing.T) {
 	if out.Headers["Authorization"] != "[REDACTED]" {
 		t.Fatalf("stored Authorization header = %q", out.Headers["Authorization"])
 	}
-	// get_products with a brief satisfies expectations: no arg problems.
+	// get_products with buying_mode (the required arg) satisfies expectations: no arg problems.
 	if len(out.ArgProblems) != 0 {
 		t.Fatalf("ArgProblems = %v, want none", out.ArgProblems)
 	}

@@ -14,23 +14,60 @@ import (
 	"encoding/pem"
 	"fmt"
 	"hash"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // Supported signature algorithms.
+//
+// Registry status (RFC 9421 §6.2, "HTTP Signature Algorithms"): ed25519,
+// ecdsa-p256-sha256, ecdsa-p384-sha384, ecdsa-p521-sha512, rsa-v1_5-sha256,
+// rsa-v1_5-sha512, rsa-pss-sha512, and hmac-sha256 are registered.
+// rsa-pss-sha256 is NOT in the registry (only rsa-pss-sha512 is); it is
+// listed here so the debugger can report it as unregistered instead of
+// silently failing.
 const (
 	AlgEd25519    = "ed25519"
 	AlgECDSAP256  = "ecdsa-p256-sha256"
 	AlgECDSAP384  = "ecdsa-p384-sha384"
 	AlgECDSAP521  = "ecdsa-p521-sha512"
-	AlgRSAPSS256  = "rsa-pss-sha256"
+	AlgRSAPSS256  = "rsa-pss-sha256" // NOT in the RFC 9421 registry
 	AlgRSAPSS512  = "rsa-pss-sha512"
 	AlgRSAPKCS256 = "rsa-v1_5-sha256"
 	AlgRSAPKCS512 = "rsa-v1_5-sha512"
 	AlgHMACSHA256 = "hmac-sha256"
 )
+
+// AdCPProfileAlgs are the only signature algorithms the AdCP 3.1 profile
+// allows. Anything else may be a valid RFC 9421 signature but is not
+// AdCP-conformant.
+var AdCPProfileAlgs = []string{AlgEd25519, AlgECDSAP256}
+
+// InAdCPProfile reports whether alg is allowed by the AdCP 3.1 signature
+// profile (Ed25519 / ES256 only).
+func InAdCPProfile(alg string) bool {
+	for _, a := range AdCPProfileAlgs {
+		if alg == a {
+			return true
+		}
+	}
+	return false
+}
+
+// registeredAlgs is the RFC 9421 §6.2 "HTTP Signature Algorithms"
+// registry (initial contents). rsa-pss-sha256 is deliberately absent.
+var registeredAlgs = map[string]bool{
+	AlgEd25519:    true,
+	AlgECDSAP256:  true,
+	AlgECDSAP384:  true,
+	AlgECDSAP521:  true,
+	AlgRSAPSS512:  true,
+	AlgRSAPKCS256: true,
+	AlgRSAPKCS512: true,
+	AlgHMACSHA256: true,
+}
 
 // base64Std encodes s with standard base64.
 func base64Std(s string) string {
@@ -137,8 +174,12 @@ func inferAlgorithm(pub crypto.PublicKey) string {
 	return ""
 }
 
-// checkAlgorithm verifies the alg parameter agrees with the key type.
+// checkAlgorithm verifies the alg parameter is registered and agrees
+// with the key type.
 func checkAlgorithm(alg string, pub crypto.PublicKey) (bool, string) {
+	if alg != "" && !registeredAlgs[alg] {
+		return false, fmt.Sprintf("alg %q is not in the RFC 9421 HTTP Signature Algorithms registry; refusing to verify", alg)
+	}
 	switch alg {
 	case AlgEd25519:
 		if _, ok := pub.(ed25519.PublicKey); ok {
@@ -171,6 +212,9 @@ func checkAlgorithm(alg string, pub crypto.PublicKey) (bool, string) {
 
 // verifySignature verifies sig over base with the named algorithm.
 func verifySignature(alg string, pub crypto.PublicKey, keyPEM, base, sig []byte) error {
+	if alg != "" && !registeredAlgs[alg] {
+		return fmt.Errorf("alg %q is not in the RFC 9421 HTTP Signature Algorithms registry; refusing to verify", alg)
+	}
 	switch alg {
 	case AlgEd25519:
 		k, ok := pub.(ed25519.PublicKey)
@@ -186,9 +230,18 @@ func verifySignature(alg string, pub crypto.PublicKey, keyPEM, base, sig []byte)
 		if !ok {
 			return fmt.Errorf("not an ECDSA key")
 		}
+		// RFC 9421 §3.3.2: the signature is the raw fixed-size
+		// concatenation r‖s (big-endian, zero-padded), NOT ASN.1 DER.
+		size := ecdsaSigSize(alg)
+		if len(sig) != 2*size {
+			return fmt.Errorf("ECDSA signature must be %d octets (raw r‖s per RFC 9421 §3.3.2), got %d; DER-encoded signatures are not valid here",
+				2*size, len(sig))
+		}
+		r := new(big.Int).SetBytes(sig[:size])
+		s := new(big.Int).SetBytes(sig[size:])
 		h := ecdsaHash(alg)
 		sum := hashSum(h, base)
-		if !ecdsa.VerifyASN1(k, sum, sig) {
+		if !ecdsa.Verify(k, sum, r, s) {
 			return fmt.Errorf("ECDSA verification failed")
 		}
 		return nil
@@ -224,6 +277,17 @@ func verifySignature(alg string, pub crypto.PublicKey, keyPEM, base, sig []byte)
 		return nil
 	default:
 		return fmt.Errorf("unsupported algorithm %q", alg)
+	}
+}
+
+func ecdsaSigSize(alg string) int {
+	switch alg {
+	case AlgECDSAP384:
+		return 48
+	case AlgECDSAP521:
+		return 66
+	default:
+		return 32
 	}
 }
 
@@ -263,7 +327,7 @@ func hashSum(h crypto.Hash, base []byte) []byte {
 
 // checkDigest cross-checks a covered content-digest component against a
 // freshly computed digest of the request body, pinpointing body tamper.
-func checkDigest(req *Request, headers map[string]string, body []byte, covered []innerItem, check func(Check)) {
+func checkDigest(req *Request, headers map[string][]string, body []byte, covered []innerItem, check func(Check)) {
 	coveredDigest := false
 	for _, it := range covered {
 		if strings.ToLower(it.Value) == "content-digest" {
@@ -274,7 +338,7 @@ func checkDigest(req *Request, headers map[string]string, body []byte, covered [
 		check(Check{Name: "content-digest", OK: true, Detail: "not covered; nothing to cross-check"})
 		return
 	}
-	raw, ok := headers["content-digest"]
+	raw, ok := firstHeader(headers, "content-digest")
 	if !ok {
 		check(Check{Name: "content-digest", OK: false, Detail: "covered but the request has no content-digest header"})
 		return
@@ -357,6 +421,46 @@ func checkExpiry(params map[string]string, now time.Time, check func(Check)) {
 		}
 	}
 	check(Check{Name: "expiry", OK: true, Detail: "created/expires are consistent with the current time"})
+}
+
+// checkReplay surfaces the signature's freshness bindings. A stateless
+// debugger cannot detect replays: the seller must enforce expires and
+// keep a nonce cache. When the signature carries no created/expires and
+// no nonce, this is a warning, not a validity failure — the signature
+// may still verify, but the seller has nothing to bind freshness to.
+func checkReplay(params map[string]string, check func(Check)) {
+	_, hasCreated := params["created"]
+	_, hasExpires := params["expires"]
+	nonceS, hasNonce := params["nonce"]
+	tagS, hasTag := params["tag"]
+	var parts []string
+	if hasCreated {
+		parts = append(parts, "created="+params["created"])
+	}
+	if hasExpires {
+		parts = append(parts, "expires="+params["expires"])
+	}
+	if hasNonce {
+		nonce := unquote(nonceS)
+		if nonce == "" {
+			check(Check{Name: "replay-protection", OK: false,
+				Detail: "nonce parameter is present but empty; a replayable signature with an empty nonce binds nothing"})
+			return
+		}
+		parts = append(parts, "nonce="+strconv.Quote(nonce))
+	}
+	if hasTag {
+		tag := unquote(tagS)
+		parts = append(parts, "tag="+strconv.Quote(tag))
+	}
+	if len(parts) == 0 {
+		check(Check{Name: "replay-protection", OK: true,
+			Detail: "WARNING: signature binds no freshness (no created/expires/nonce); it can be replayed indefinitely — sellers must enforce expiry and nonce caches"})
+		return
+	}
+	check(Check{Name: "replay-protection", OK: true,
+		Detail: "freshness bindings present: " + strings.Join(parts, ", ") +
+			" (the seller must still enforce expiry and nonce caching — this debugger cannot detect replays)"})
 }
 
 // diffCheck diffs the reconstructed base against an expected base the

@@ -6,15 +6,15 @@ import (
 )
 
 func TestValidateArgs(t *testing.T) {
-	full := json.RawMessage(`{"account":"a","brand":"b","start_time":"2026-01-01","end_time":"2026-02-01"}`)
+	full := json.RawMessage(`{"idempotency_key":"k","account":"a","brand":"b","start_time":"2026-01-01","end_time":"2026-02-01"}`)
 	if p := ValidateArgs("create_media_buy", full); len(p) != 0 {
 		t.Fatalf("full args flagged: %v", p)
 	}
 
 	partial := json.RawMessage(`{"account":"a"}`)
 	problems := ValidateArgs("create_media_buy", partial)
-	if len(problems) != 3 {
-		t.Fatalf("problems = %v, want 3 missing fields", problems)
+	if len(problems) != 4 {
+		t.Fatalf("problems = %v, want 4 missing fields", problems)
 	}
 
 	// Unknown tool: nothing to check against.
@@ -37,8 +37,11 @@ func TestValidateArgs(t *testing.T) {
 		t.Fatal("invalid JSON arguments not flagged")
 	}
 
-	// get_products requires a brief.
+	// get_products requires buying_mode (brief is optional per 3.1).
 	if p := ValidateArgs("get_products", json.RawMessage(`{}`)); len(p) != 1 {
-		t.Fatalf("missing brief not flagged: %v", p)
+		t.Fatalf("missing buying_mode not flagged: %v", p)
+	}
+	if p := ValidateArgs("get_products", json.RawMessage(`{"buying_mode":"brief"}`)); len(p) != 0 {
+		t.Fatalf("buying_mode without brief flagged: %v", p)
 	}
 }

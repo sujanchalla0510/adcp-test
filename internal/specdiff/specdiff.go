@@ -1,12 +1,13 @@
 // Package specdiff diffs AdCP spec-version expectation surfaces.
 //
 // The 3.1 surface is the baseline adcp-test checks against (derived from
-// internal/conformance's expected tool surface). The 4.0 surface is a
-// DRAFT expectation set encoding what is known publicly about the next
-// revision — it is not a published spec, and every 4.0 artifact is marked
-// accordingly.
+// internal/conformance's expected tool surface). The 4.0-draft-expectations
+// surface is a DRAFT expectation set encoding what is known publicly about
+// the next revision — it is not a published spec, and every draft artifact
+// is marked accordingly.
 //
-// Known 4.0-direction facts (from public implementer discussion, Sep 2026):
+// Known 4.0-direction facts (AdCP Slack auth discussion, 2026-09-28 —
+// public implementer discussion; NOT a published spec):
 //   - RFC 9421 signatures become mandatory for spend/mutating operations.
 //   - Multi-account agents: the buyer declares each brand + operator via
 //     sync_accounts, and the seller checks per call that the account
@@ -55,6 +56,10 @@ type AuthRequirement struct {
 	Mandatory bool `json:"mandatory"`
 	// Detail is human context.
 	Detail string `json:"detail"`
+	// Source cites where the expectation comes from. Expectations taken
+	// from a published spec cite the spec; draft expectations cite the
+	// discussion they were derived from and are not authoritative.
+	Source string `json:"source,omitempty"`
 }
 
 // Surface is the expected tool + auth surface for one spec version.
@@ -82,6 +87,9 @@ type ToolChange struct {
 	Kind   ChangeKind `json:"kind"`
 	Tool   string     `json:"tool"`
 	Detail string     `json:"detail"`
+	// Source cites where the expectation comes from (see
+	// AuthRequirement.Source).
+	Source string `json:"source,omitempty"`
 }
 
 // AuthChange is one auth-requirement difference between two versions.
@@ -90,6 +98,9 @@ type AuthChange struct {
 	Scope     string     `json:"scope"`
 	Mechanism string     `json:"mechanism"`
 	Detail    string     `json:"detail"`
+	// Source cites where the expectation comes from (see
+	// AuthRequirement.Source).
+	Source string `json:"source,omitempty"`
 }
 
 // Diff is the computed difference between two surfaces.
@@ -102,17 +113,29 @@ type Diff struct {
 }
 
 // Versions lists the known surface versions in order.
-func Versions() []string { return []string{"3.1", "4.0"} }
+//
+// "4.0-draft-expectations" is deliberately not called "4.0": there is no
+// published AdCP 4.0 spec, and naming the version "4.0" would let the
+// table be cited as the spec. It is a draft expectation set derived from
+// public implementer discussion.
+func Versions() []string { return []string{"3.1", "4.0-draft-expectations"} }
+
+// draftVersion is the draft-expectations version name.
+const draftVersion = "4.0-draft-expectations"
+
+// draftSource cites the actual source of every draft expectation. The
+// table is not a published spec and must never be cited as one.
+const draftSource = "AdCP Slack auth discussion, 2026-09-28 (public implementer discussion; NOT a published spec)"
 
 // Get returns the expectation surface for a known version.
 func Get(version string) (*Surface, error) {
 	switch version {
 	case "3.1":
 		return surface31(), nil
-	case "4.0":
+	case draftVersion:
 		return surface40(), nil
 	default:
-		return nil, fmt.Errorf("specdiff: unknown version %q (known: 3.1, 4.0)", version)
+		return nil, fmt.Errorf("specdiff: unknown version %q (known: %s)", version, strings.Join(Versions(), ", "))
 	}
 }
 
@@ -136,10 +159,10 @@ func surface31() *Surface {
 }
 
 // surface40 is the draft 4.0 expectation set. DRAFT — not a published
-// spec. It encodes public implementer discussion (Sep 2026): mandatory
-// signing for spend operations, multi-account agents via sync_accounts,
-// per-call account-belongs-to-signer checks, and the require_operator_auth
-// OAuth alternative.
+// spec. It encodes the public implementer discussion cited in
+// draftSource: mandatory signing for spend operations, multi-account
+// agents via sync_accounts, per-call account-belongs-to-signer checks,
+// and the require_operator_auth OAuth alternative.
 func surface40() *Surface {
 	tools := make([]conformance.ExpectedTool, 0, len(conformance.CoreTools))
 	for _, t := range conformance.CoreTools {
@@ -152,18 +175,18 @@ func surface40() *Surface {
 		tools = append(tools, t)
 	}
 	return &Surface{
-		Version: "4.0",
+		Version: draftVersion,
 		Status:  StatusDraftExpectation,
-		Note:    "DRAFT expectation, not a published spec. Encodes public implementer discussion (Sep 2026); verify against the released spec before treating any entry as authoritative.",
+		Note:    "DRAFT expectation, not a published spec. " + draftSource + "; verify against the released spec before treating any entry as authoritative.",
 		Tools:   tools,
 		Auth: []AuthRequirement{
-			{Scope: "spend", Mechanism: "rfc9421-signature", Mandatory: true,
+			{Scope: "spend", Mechanism: "rfc9421-signature", Mandatory: true, Source: draftSource,
 				Detail: "RFC 9421 signatures become mandatory for spend operations (mutating calls that commit money)."},
-			{Scope: "mutating", Mechanism: "rfc9421-signature", Mandatory: true,
-				Detail: "Unsigned or malformed mutating calls must be rejected; optional in 3.1, mandatory in 4.0."},
-			{Scope: "spend", Mechanism: "account-ownership-check", Mandatory: true,
+			{Scope: "mutating", Mechanism: "rfc9421-signature", Mandatory: true, Source: draftSource,
+				Detail: "Unsigned or malformed mutating calls must be rejected; optional in 3.1, mandatory in the draft 4.0 expectations."},
+			{Scope: "spend", Mechanism: "account-ownership-check", Mandatory: true, Source: draftSource,
 				Detail: "Per call, the seller checks that the account belongs to the agent that signed the request (signature says who is calling; authorization is per account)."},
-			{Scope: "spend", Mechanism: "oauth-operator-auth", Mandatory: false,
+			{Scope: "spend", Mechanism: "oauth-operator-auth", Mandatory: false, Source: draftSource,
 				Detail: "Alternative model: require_operator_auth — the agent carries the operator's OAuth credential and only sees that operator's accounts."},
 		},
 	}
@@ -172,6 +195,14 @@ func surface40() *Surface {
 // DiffSurfaces computes the surface diff from one version to another.
 func DiffSurfaces(from, to *Surface) *Diff {
 	d := &Diff{From: from.Version, To: to.Version, ToStatus: to.Status}
+
+	// changeSource cites the discussion behind any change that involves
+	// a draft-expectations surface; changes between two published
+	// surfaces need no source annotation.
+	changeSource := ""
+	if from.Status == StatusDraftExpectation || to.Status == StatusDraftExpectation {
+		changeSource = draftSource
+	}
 
 	fromTools := map[string]conformance.ExpectedTool{}
 	for _, t := range from.Tools {
@@ -185,17 +216,17 @@ func DiffSurfaces(from, to *Surface) *Diff {
 		tt, ok := toTools[name]
 		switch {
 		case !ok:
-			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeRemoved, Tool: name, Detail: "tool removed from the expected surface"})
+			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeRemoved, Tool: name, Detail: "tool removed from the expected surface", Source: changeSource})
 		case !ft.Required && tt.Required:
-			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeRequired, Tool: name,
+			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeRequired, Tool: name, Source: changeSource,
 				Detail: fmt.Sprintf("optional in %s, required in %s: %s", from.Version, to.Version, tt.Description)})
 		case ft.Required && !tt.Required:
-			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeOptional, Tool: name, Detail: "no longer required"})
+			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeOptional, Tool: name, Detail: "no longer required", Source: changeSource})
 		}
 	}
 	for name := range toTools {
 		if _, ok := fromTools[name]; !ok {
-			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeAdded, Tool: name, Detail: "new tool in the expected surface"})
+			d.ToolChanges = append(d.ToolChanges, ToolChange{Kind: ChangeAdded, Tool: name, Detail: "new tool in the expected surface", Source: changeSource})
 		}
 	}
 	sort.Slice(d.ToolChanges, func(i, j int) bool { return d.ToolChanges[i].Tool < d.ToolChanges[j].Tool })
@@ -210,15 +241,15 @@ func DiffSurfaces(from, to *Surface) *Diff {
 		fa, ok := fromAuth[k]
 		switch {
 		case !ok:
-			d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeAdded, Scope: a.Scope, Mechanism: a.Mechanism, Detail: a.Detail})
+			d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeAdded, Scope: a.Scope, Mechanism: a.Mechanism, Detail: a.Detail, Source: a.Source})
 		case fa.Mandatory != a.Mandatory:
-			d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeAuth, Scope: a.Scope, Mechanism: a.Mechanism,
+			d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeAuth, Scope: a.Scope, Mechanism: a.Mechanism, Source: a.Source,
 				Detail: fmt.Sprintf("optional in %s, mandatory in %s: %s", from.Version, to.Version, a.Detail)})
 		}
 		delete(fromAuth, k)
 	}
 	for _, a := range fromAuth {
-		d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeRemoved, Scope: a.Scope, Mechanism: a.Mechanism, Detail: "requirement dropped"})
+		d.AuthChanges = append(d.AuthChanges, AuthChange{Kind: ChangeRemoved, Scope: a.Scope, Mechanism: a.Mechanism, Detail: "requirement dropped", Source: changeSource})
 	}
 	sort.Slice(d.AuthChanges, func(i, j int) bool {
 		if d.AuthChanges[i].Scope != d.AuthChanges[j].Scope {
@@ -286,7 +317,7 @@ func DiffAgainstTarget(ctx context.Context, target string, fromVersion, toVersio
 		out.Findings = append(out.Findings, TargetFinding{
 			Severity: "attention",
 			Check:    "tool-surface",
-			Detail:   "tool surface could not be read; 4.0 readiness (e.g. sync_accounts) cannot be assessed",
+			Detail:   "tool surface could not be read; draft-4.0 readiness (e.g. sync_accounts) cannot be assessed",
 		})
 	}
 	// Mandatory signing for spend ops: the 3.1 auth probes document what

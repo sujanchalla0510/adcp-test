@@ -30,7 +30,7 @@ and exits 0 on success, 1 on failure):
 ./adcp-test signdebug --request req.json --key key.pem
 ./adcp-test lifecycle --target https://seller.example/mcp
 ./adcp-test fuzz --target http://127.0.0.1:8089
-./adcp-test specdiff --from 3.1 --to 4.0 --target https://seller.example/mcp
+./adcp-test specdiff --from 3.1 --to 4.0-draft-expectations --target https://seller.example/mcp
 ./adcp-test mcp                                            # MCP server over stdio
 ```
 

@@ -32,6 +32,7 @@ var allTools = []tool{
 			"properties": map[string]any{
 				"target":       map[string]any{"type": "string", "description": "Seller MCP endpoint URL (required)"},
 				"bearer_token": map[string]any{"type": "string", "description": "Bearer token for the target (optional)"},
+				"profile":      map[string]any{"type": "string", "description": "Tool-surface profile: full (default), media-buy, creative, or signals (optional)"},
 			},
 			"required": []string{"target"},
 		},
@@ -64,11 +65,12 @@ var allTools = []tool{
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"request":       map[string]any{"type": "object", "description": "The signed request: {method, url, headers, body} (required)"},
-				"key_pem":       map[string]any{"type": "string", "description": "PEM-encoded public or private key (required)"},
+				"request":       map[string]any{"type": "object", "description": "The signed request: {method, url, headers, header_instances?, body} (required). header_instances is an ordered list of [name, value] pairs for repeated headers (e.g. multi-instance fields with ;bs)."},
+				"key_pem":       map[string]any{"type": "string", "description": "PEM-encoded public or private key (required unless jwks_url is set)"},
+				"jwks_url":      map[string]any{"type": "string", "description": "https JWKS URL: resolve the signature's keyid to a public key via the JWKS (selects the JWK whose kid matches) instead of using key_pem (optional)"},
 				"expected_base": map[string]any{"type": "string", "description": "Signer-computed signature base to diff against (optional)"},
 			},
-			"required": []string{"request", "key_pem"},
+			"required": []string{"request"},
 		},
 		Handler: handleDebugSignature,
 	},
@@ -134,6 +136,7 @@ func handleRunConformance(ctx context.Context, raw json.RawMessage) (any, error)
 	var args struct {
 		Target      string `json:"target"`
 		BearerToken string `json:"bearer_token"`
+		Profile     string `json:"profile"`
 	}
 	if err := toolArgs(raw, &args); err != nil {
 		return nil, err
@@ -143,7 +146,7 @@ func handleRunConformance(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	tctx, cancel := context.WithTimeout(ctx, toolTimeouts["run_conformance"])
 	defer cancel()
-	rep, err := conformance.Run(tctx, args.Target, conformance.Options{BearerToken: args.BearerToken})
+	rep, err := conformance.Run(tctx, args.Target, conformance.Options{BearerToken: args.BearerToken, Profile: args.Profile})
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +210,9 @@ type debugSignatureArgs struct {
 	Request      signdebug.Request `json:"request"`
 	KeyPEM       string            `json:"key_pem"`
 	ExpectedBase string            `json:"expected_base"`
+	// JWKSURL, when set, resolves the signature's keyid via the JWKS at
+	// this https URL instead of using key_pem.
+	JWKSURL string `json:"jwks_url"`
 }
 
 // handleDebugSignature implements the debug_signature tool.
@@ -218,11 +224,11 @@ func handleDebugSignature(ctx context.Context, raw json.RawMessage) (any, error)
 	if args.Request.Method == "" || args.Request.URL == "" {
 		return nil, fmt.Errorf("request.method and request.url are required")
 	}
-	if args.KeyPEM == "" {
-		return nil, fmt.Errorf("key_pem is required")
+	if args.KeyPEM == "" && args.JWKSURL == "" {
+		return nil, fmt.Errorf("key_pem or jwks_url is required")
 	}
 	rep := signdebug.Verify(&args.Request, []byte(args.KeyPEM),
-		signdebug.Options{ExpectedBase: args.ExpectedBase})
+		signdebug.Options{ExpectedBase: args.ExpectedBase, JWKSURL: args.JWKSURL})
 	return reportEnvelope{
 		Summary: fmt.Sprintf("signature verification: %s (%s)", rep.Verdict, rep.Summary),
 		Passed:  rep.Verdict == "valid",

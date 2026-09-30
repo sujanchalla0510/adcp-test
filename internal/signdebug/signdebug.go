@@ -10,8 +10,10 @@
 package signdebug
 
 import (
+	"crypto"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +23,11 @@ type Request struct {
 	Method  string            `json:"method"`
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
+	// HeaderInstances carries repeated headers as ordered (name, value)
+	// pairs, appended after Headers in the lookup. map[string]string
+	// cannot represent multi-instance fields, which the RFC 9421 §2.1
+	// ;bs construction needs to keep distinct.
+	HeaderInstances [][2]string `json:"header_instances,omitempty"`
 	// Body is the raw request body. BodyBase64 carries binary bodies.
 	Body       []byte `json:"-"`
 	BodyText   string `json:"body,omitempty"`
@@ -39,12 +46,32 @@ func (r *Request) BodyBytes() ([]byte, error) {
 }
 
 // headerLookup returns a case-insensitive view of the request headers.
-func (r *Request) headerLookup() map[string]string {
-	out := make(map[string]string, len(r.Headers))
+// Each name maps to its values in message order (one entry per field
+// instance), because the RFC 9421 §2.1 ;bs construction needs the
+// ordered set of field values, not a pre-combined string. Entries from
+// HeaderInstances are appended after the single-value Headers entries,
+// so repeated headers stay distinct while singleton headers keep
+// working.
+func (r *Request) headerLookup() map[string][]string {
+	out := make(map[string][]string, len(r.Headers))
 	for k, v := range r.Headers {
-		out[strings.ToLower(k)] = v
+		out[strings.ToLower(k)] = []string{v}
+	}
+	for _, hv := range r.HeaderInstances {
+		name := strings.ToLower(hv[0])
+		out[name] = append(out[name], hv[1])
 	}
 	return out
+}
+
+// firstHeader returns the first instance of a header (singleton headers
+// such as Signature-Input are not repeated in practice).
+func firstHeader(headers map[string][]string, name string) (string, bool) {
+	vals, ok := headers[strings.ToLower(name)]
+	if !ok || len(vals) == 0 || strings.TrimSpace(vals[0]) == "" {
+		return "", false
+	}
+	return vals[0], true
 }
 
 // Component is one covered component with the value used in the base.
@@ -85,6 +112,13 @@ type Options struct {
 	ExpectedBase string
 	// Now overrides the clock for created/expires checks.
 	Now time.Time
+	// JWKSURL, when set, resolves the signature's keyid to a public key
+	// by fetching the JWKS at this https URL and selecting the JWK
+	// whose kid matches. When unset, the operator-supplied keyPEM is
+	// used (the debugger can never know the seller's real keys — a
+	// production seller must resolve keyid itself; this flag only
+	// reproduces the lookup).
+	JWKSURL string
 }
 
 // Verify reconstructs the RFC 9421 signature base for req and verifies
@@ -105,14 +139,14 @@ func Verify(req *Request, keyPEM []byte, opts Options) *Report {
 	}
 	headers := req.headerLookup()
 
-	sigInputRaw, ok := headers["signature-input"]
-	if !ok || strings.TrimSpace(sigInputRaw) == "" {
+	sigInputRaw, ok := firstHeader(headers, "signature-input")
+	if !ok {
 		check(Check{Name: "signature-input-present", OK: false, Detail: "no Signature-Input header in the request"})
 		fail("no Signature-Input header present")
 		return rep
 	}
-	sigRaw, ok := headers["signature"]
-	if !ok || strings.TrimSpace(sigRaw) == "" {
+	sigRaw, ok := firstHeader(headers, "signature")
+	if !ok {
 		check(Check{Name: "signature-present", OK: false, Detail: "no Signature header in the request"})
 		fail("no Signature header present")
 		return rep
@@ -170,15 +204,38 @@ func Verify(req *Request, keyPEM []byte, opts Options) *Report {
 		Detail: fmt.Sprintf("decoded %d signature bytes for label %q", len(sigBytes), label)})
 	step("decoded signature bytes")
 
-	// 3. Parse key material (in memory only; never echoed).
-	pub, keyDesc, keyErr := parseKey(keyPEM, rep.Algorithm)
-	if keyErr != nil {
-		check(Check{Name: "key-parse", OK: false, Detail: keyErr.Error()})
-		fail("key material does not parse: " + keyErr.Error())
-		return rep
+	// 3. Resolve key material (in memory only; never echoed).
+	//
+	// With Options.JWKSURL the keyid is resolved the way a production
+	// seller must: fetch the JWKS and select the JWK whose kid matches.
+	// Without it, the operator pastes key material — the debugger can
+	// never know the seller's real keys, so keyid alone proves nothing.
+	var pub crypto.PublicKey
+	var keyDesc string
+	if opts.JWKSURL != "" {
+		var keyErr error
+		pub, keyDesc, keyErr = resolveKeyFromJWKS(opts.JWKSURL, rep.KeyID)
+		if keyErr != nil {
+			check(Check{Name: "keyid-resolution", OK: false, Detail: keyErr.Error()})
+			fail("keyid resolution failed: " + keyErr.Error())
+			return rep
+		}
+		check(Check{Name: "keyid-resolution", OK: true, Detail: "resolved " + keyDesc})
+		step("resolved keyid " + rep.KeyID + " from JWKS (" + keyDesc + ")")
+	} else {
+		var keyErr error
+		pub, keyDesc, keyErr = parseKey(keyPEM, rep.Algorithm)
+		if keyErr != nil {
+			check(Check{Name: "key-parse", OK: false, Detail: keyErr.Error()})
+			fail("key material does not parse: " + keyErr.Error())
+			return rep
+		}
+		check(Check{Name: "key-parse", OK: true, Detail: "parsed " + keyDesc + " (key bytes never persisted or logged)"})
+		step("parsed key material (" + keyDesc + ")")
 	}
-	check(Check{Name: "key-parse", OK: true, Detail: "parsed " + keyDesc + " (key bytes never persisted or logged)"})
-	step("parsed key material (" + keyDesc + ")")
+	check(Check{Name: "keyid", OK: true,
+		Detail: fmt.Sprintf("keyid=%q (recorded for lookup; a keyid is only a hint — the seller must resolve it to trusted key material itself)", rep.KeyID)})
+	step("recorded keyid " + strconv.Quote(rep.KeyID))
 
 	// 4. Algorithm vs key agreement.
 	alg := rep.Algorithm
@@ -189,6 +246,18 @@ func Verify(req *Request, keyPEM []byte, opts Options) *Report {
 	}
 	algOK, algDetail := checkAlgorithm(alg, pub)
 	check(Check{Name: "algorithm", OK: algOK, Detail: algDetail})
+
+	// 4b. AdCP 3.1 signature profile: Ed25519 / ES256 only. This is a
+	// warning check, not a validity gate — a signature with another
+	// registered alg can be a valid RFC 9421 signature while still
+	// being non-conformant for AdCP.
+	if InAdCPProfile(alg) {
+		check(Check{Name: "adcp-profile", OK: true,
+			Detail: fmt.Sprintf("alg %q is within the AdCP 3.1 signature profile (Ed25519/ES256 only)", alg)})
+	} else {
+		check(Check{Name: "adcp-profile", OK: true,
+			Detail: fmt.Sprintf("WARNING: alg %q is outside the AdCP 3.1 signature profile (Ed25519/ES256 only); the signature may verify under RFC 9421 but is not AdCP-conformant", alg)})
+	}
 
 	// 5. Reconstruct covered components.
 	body, err := req.BodyBytes()
@@ -221,6 +290,13 @@ func Verify(req *Request, keyPEM []byte, opts Options) *Report {
 	// 8. created / expires.
 	checkExpiry(params, now, check)
 
+	// 8b. Replay protection: freshness bindings the signature carries.
+	// A stateless debugger cannot detect replays — the seller must
+	// enforce expiry and nonce caches. This check surfaces what the
+	// signature binds so the operator knows what the seller has to
+	// work with.
+	checkReplay(params, check)
+
 	// 9. Optional expected-base diff: pinpoints the exact component.
 	if strings.TrimSpace(opts.ExpectedBase) != "" {
 		diffCheck(rep.Base, opts.ExpectedBase, check)
@@ -230,12 +306,10 @@ func Verify(req *Request, keyPEM []byte, opts Options) *Report {
 	// 10. Verify the signature.
 	verr := verifySignature(alg, pub, keyPEM, []byte(base), sigBytes)
 	if verr != nil {
-		detail := "signature does not verify over the reconstructed base"
+		detail := "signature does not verify over the reconstructed base: " + verr.Error()
 		causes := likelyCauses(rep)
 		if len(causes) > 0 {
 			detail += "; likely causes: " + strings.Join(causes, "; ")
-		} else {
-			detail += ": at least one covered component differs from signing time, or the wrong key was supplied"
 		}
 		check(Check{Name: "signature-verify", OK: false, Detail: detail})
 		fail("INVALID: " + detail)
